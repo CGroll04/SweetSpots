@@ -261,6 +261,8 @@
 		};
 		279228C02D59445E00A8A008 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = 279228B32D59445D00A8A008 /* SweetSpots */;
+			baseConfigurationReferenceRelativePath = Config.xcconfig;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -290,6 +292,8 @@
 		};
 		279228C12D59445E00A8A008 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = 279228B32D59445D00A8A008 /* SweetSpots */;
+			baseConfigurationReferenceRelativePath = Config.xcconfig;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;

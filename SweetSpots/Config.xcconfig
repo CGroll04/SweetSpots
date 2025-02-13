@@ -1,0 +1,10 @@
+//
+//  Config.xcconfig
+//  SweetSpots
+//
+//  Created by Charlie Groll on 2025-02-12.
+//
+
+// Configuration settings file format documentation can be found at:
+// https://help.apple.com/xcode/#/dev745c5c974
+API_KEY = AIzaSyA1DGFFm3gj_jprB3SdZuaSsSNfqJoa60A
