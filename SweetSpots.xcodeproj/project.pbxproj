@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		27DDDC6A2DC81107007F073E /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 27DDDC692DC81107007F073E /* FirebaseAuth */; };
+		27DDDC6C2DC81107007F073E /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 27DDDC6B2DC81107007F073E /* FirebaseFirestore */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		27DDDC4C2DC8101B007F073E /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -29,9 +34,22 @@
 		27DDDC552DC8101B007F073E /* SweetSpotsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SweetSpotsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		27C0FAE52DDBC95200C9A039 /* Exceptions for "SweetSpots" folder in "SweetSpots" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 27DDDC3D2DC81019007F073E /* SweetSpots */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		27DDDC402DC81019007F073E /* SweetSpots */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				27C0FAE52DDBC95200C9A039 /* Exceptions for "SweetSpots" folder in "SweetSpots" target */,
+			);
 			path = SweetSpots;
 			sourceTree = "<group>";
 		};
@@ -52,6 +70,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				27DDDC6A2DC81107007F073E /* FirebaseAuth in Frameworks */,
+				27DDDC6C2DC81107007F073E /* FirebaseFirestore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +132,8 @@
 			);
 			name = SweetSpots;
 			packageProductDependencies = (
+				27DDDC692DC81107007F073E /* FirebaseAuth */,
+				27DDDC6B2DC81107007F073E /* FirebaseFirestore */,
 			);
 			productName = SweetSpots;
 			productReference = 27DDDC3E2DC81019007F073E /* SweetSpots.app */;
@@ -195,6 +217,9 @@
 			);
 			mainGroup = 27DDDC352DC81019007F073E;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				27DDDC682DC81107007F073E /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 27DDDC3F2DC81019007F073E /* Products */;
 			projectDirPath = "";
@@ -400,6 +425,9 @@
 				DEVELOPMENT_TEAM = BQJVVK7V3Q;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SweetSpots/Info.plist;
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "SweetSpots uses your location in the background to notify you when you're near one of your saved favorite places, even when the app is closed";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "SweetSpots uses your location to show nearby saved places on the map and help you discover them";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -428,6 +456,9 @@
 				DEVELOPMENT_TEAM = BQJVVK7V3Q;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SweetSpots/Info.plist;
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "SweetSpots uses your location in the background to notify you when you're near one of your saved favorite places, even when the app is closed";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "SweetSpots uses your location to show nearby saved places on the map and help you discover them";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -558,6 +589,30 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		27DDDC682DC81107007F073E /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.12.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		27DDDC692DC81107007F073E /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 27DDDC682DC81107007F073E /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		27DDDC6B2DC81107007F073E /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 27DDDC682DC81107007F073E /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 27DDDC362DC81019007F073E /* Project object */;
 }
