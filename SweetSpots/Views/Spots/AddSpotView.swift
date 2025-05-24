@@ -6,201 +6,224 @@
 //
 
 import SwiftUI
-import MapKit // For MKCoordinateRegion
+import MapKit
 
 struct AddSpotView: View {
-    @EnvironmentObject var spotsViewModel: SpotViewModel
-    @EnvironmentObject var authViewModel: AuthViewModel
-    @EnvironmentObject var locationManager: LocationManager
+    @EnvironmentObject private var spotsViewModel: SpotViewModel
+    @EnvironmentObject private var authViewModel: AuthViewModel
+    @EnvironmentObject private var locationManager: LocationManager
     @StateObject private var searchCompleterVM = SearchCompleterViewModel()
-
-    @Binding var selectedTab: Int
-
-    @State private var spotName: String = ""
-    @State private var spotAddress: String = "" // For display/confirmation after selection
-    @State private var spotCoordinates: CLLocationCoordinate2D?
-    @State private var spotURL: String = ""
-
-    @State private var showAlert = false
-    @State private var alertMessage = ""
-    @State private var isSaving = false
     
-    @FocusState private var isSearchFieldFocused: Bool // To manage focus
-
-    var canSave: Bool {
+    @Binding var selectedTab: Int // Assuming this is still an Int from MainTabView
+    
+    @State private var spotName = ""
+    @State private var spotAddress = ""
+    @State private var spotCoordinates: CLLocationCoordinate2D?
+    @State private var spotURL = ""
+    @State private var selectedCategory: SpotCategory = .other // Default category
+    
+    @State private var isSaving = false
+    @State private var showingAlert = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
+    
+    @FocusState private var focusedField: Field?
+    
+    private enum Field: Hashable { // Made Hashable for @FocusState
+        case name, search, url, category
+    }
+    
+    private var canSave: Bool {
         !spotName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         spotCoordinates != nil &&
-        searchCompleterVM.selectedCompletion != nil && // Ensure a selection was made
+        searchCompleterVM.selectedCompletion != nil && // Ensures a location was picked from search
         !isSaving
     }
-
+    
     var body: some View {
         NavigationStack {
             Form {
-                Section(header: Text("Spot Details")) {
-                    TextField("Spot Name (e.g., Philz Coffee)", text: $spotName)
+                Section {
+                    ThemedTextField(title: "Spot Name", text: $spotName, systemImage: "pencil.line")
+                        .focused($focusedField, equals: .name)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .search }
                     
-                    VStack(alignment: .leading) {
-                        Text("Place or Address")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        TextField("Search here...", text: $searchCompleterVM.queryFragment)
-                            .focused($isSearchFieldFocused) // Manage focus state
-                            .onChange(of: searchCompleterVM.queryFragment) { oldValue, newValue in
-                                // If user clears the text field after making a selection, reset
-                                if newValue.isEmpty {
-                                    resetSearchFields()
-                                } else if searchCompleterVM.selectedCompletion != nil && newValue != searchCompleterVM.selectedCompletion?.titleWithSubtitle() {
-                                    // If user types something different after selection, allow new search
-                                    searchCompleterVM.selectedCompletion = nil
-                                    spotAddress = ""
-                                    spotCoordinates = nil
-                                }
+                    VStack(alignment: .leading, spacing: 10) {
+                        ThemedTextField(title: "Search for a place...", text: $searchCompleterVM.queryFragment, systemImage: "magnifyingglass")
+                            .focused($focusedField, equals: .search)
+                            .submitLabel(.done) // Or .search
+                            .onSubmit { focusedField = nil } // Or trigger search if you prefer
+                            .onChange(of: searchCompleterVM.queryFragment) { _, newValue in
+                                handleSearchChange(newValue)
                             }
-
+                        
                         if searchCompleterVM.isShowingResults && !searchCompleterVM.searchResults.isEmpty {
-                            List { // Removed explicit List(searchResults) to use implicit ForEach if needed
-                                ForEach(searchCompleterVM.searchResults, id: \.self) { completion in
-                                    Button(action: {
-                                        searchCompleterVM.selectedCompletion = completion
-                                        // Update the TextField with a comprehensive title from completion
-                                        searchCompleterVM.queryFragment = completion.titleWithSubtitle()
-                                        
-                                        // Pre-fill spot name if it's empty or was the same as previous search query
-                                        if spotName.isEmpty || spotName == (searchCompleterVM.queryFragment) { // A bit simplified
-                                            spotName = completion.title
-                                        }
-                                        
-                                        searchCompleterVM.getPlaceDetails(for: completion) { fullAddress, coordinates in
-                                            self.spotAddress = fullAddress ?? completion.titleWithSubtitle()
-                                            self.spotCoordinates = coordinates
-                                        }
-                                        searchCompleterVM.isShowingResults = false
-                                        isSearchFieldFocused = false // Dismiss keyboard
-                                    }) {
-                                        VStack(alignment: .leading) {
-                                            Text(completion.title)
-                                                .font(.headline)
-                                                .foregroundColor(.primary) // Ensure text is visible
-                                            Text(completion.subtitle)
-                                                .font(.subheadline)
-                                                .foregroundColor(.gray)
-                                        }
-                                    }
-                                    .buttonStyle(.plain) // Use plain button style for list items
-                                }
-                            }
-                            .listStyle(.plain)
-                            .frame(minHeight: 50, maxHeight: 250) // Adjust height
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 5)
-                                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                            SearchResultsList(
+                                results: searchCompleterVM.searchResults,
+                                onSelect: handleSearchSelection
                             )
                         }
                         
                         if searchCompleterVM.selectedCompletion != nil && !spotAddress.isEmpty {
-                             HStack {
-                                 Image(systemName: "mappin.and.ellipse")
-                                     .foregroundColor(.accentColor)
-                                 Text(spotAddress)
-                                     .font(.caption)
-                                     .foregroundColor(.secondary)
-                             }
-                             .padding(.top, 5)
+                            SelectedLocationView(address: spotAddress, iconName: "mappin.circle.fill")
                         }
                     }
                     
-                    TextField("Source URL (Optional)", text: $spotURL)
+                    ThemedTextField(title: "Source URL (Optional)", text: $spotURL, systemImage: "link")
+                        .focused($focusedField, equals: .url)
                         .keyboardType(.URL)
-                        .autocapitalization(.none)
-                }
+                        .textInputAutocapitalization(.never)
+                        .submitLabel(.done)
+                        .onSubmit { focusedField = nil }
 
+                    Picker("Category", selection: $selectedCategory) {
+                        ForEach(SpotCategory.allCases) { category in
+                            Label(category.displayName, systemImage: category.systemImageName)
+                                .tag(category)
+                        }
+                    }
+                    .tint(Color.themePrimary) // Color for the picker's chevron/accent
+                    .focused($focusedField, equals: .category)
+
+                } header: {
+                    Text("Spot Details")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.themeTextSecondary)
+                } footer: {
+                    if !canSave && !spotName.isEmpty && spotCoordinates == nil {
+                        Text("Please select a location from the search results to enable saving.")
+                            .font(.caption)
+                            .foregroundStyle(Color.themeError)
+                    }
+                }
+                
                 Section {
-                    Button(action: saveSpot) {
+                    Button {
+                        hideKeyboard()
+                        Task { await saveSpot() }
+                    } label: {
                         HStack {
                             Spacer()
                             if isSaving {
-                                ProgressView().padding(.trailing, 5)
-                                Text("Saving...")
+                                ProgressView().tint(Color.themeButtonText)
+                                Text("Saving...").padding(.leading, 8)
                             } else {
                                 Text("Save Sweet Spot")
                             }
                             Spacer()
                         }
+                        .padding(.vertical, 8)
                     }
                     .disabled(!canSave)
+                    .listRowBackground(canSave ? Color.themePrimary : Color.themePrimary.opacity(0.5))
+                    .foregroundStyle(Color.themeButtonText)
+                    .fontWeight(.semibold)
                 }
             }
             .navigationTitle("Add New Spot")
-            .alert("Add Spot", isPresented: $showAlert, actions: {
-                Button("OK") {}
-            }, message: {
-                Text(alertMessage)
-            })
-            .onAppear {
-                if let userLocation = locationManager.userLocation {
-                    searchCompleterVM.searchRegion = MKCoordinateRegion(
-                        center: userLocation.coordinate,
-                        span: MKCoordinateSpan(latitudeDelta: 2, longitudeDelta: 2) // Wider search area initially
-                    )
-                } else {
-                     searchCompleterVM.searchRegion = MKCoordinateRegion(.world)
-                }
+            .navigationBarTitleDisplayMode(.inline) // Or .large
+            .toolbarBackground(Color.themeBackground, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .background(Color.themeBackground.ignoresSafeArea()) // Set overall background
+            .scrollContentBackground(.hidden) // Makes Form background transparent to show Color.themeBackground
+            .task { setupSearchRegion() }
+            .alert(isPresented: $showingAlert) {
+                Alert(title: Text(alertTitle), message: Text(alertMessage), dismissButton: .default(Text("OK")))
             }
         }
     }
-
-    private func saveSpot() {
+    
+    private func setupSearchRegion() {
+        if let userLocation = locationManager.userLocation {
+            searchCompleterVM.searchRegion = MKCoordinateRegion(
+                center: userLocation.coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 2, longitudeDelta: 2) // Adjust span as needed
+            )
+        } else {
+            searchCompleterVM.searchRegion = MKCoordinateRegion(.world)
+        }
+    }
+    
+    private func handleSearchChange(_ newValue: String) {
+        if newValue.isEmpty {
+            resetSearchFieldsButKeepQuery() // Keep query for user to see, but clear results
+        } else if let selected = searchCompleterVM.selectedCompletion, newValue != selected.titleWithSubtitle() {
+            // User started typing again after selecting a result, so clear previous selection
+            searchCompleterVM.selectedCompletion = nil
+            spotAddress = ""
+            spotCoordinates = nil
+        }
+    }
+    
+    private func handleSearchSelection(_ completion: MKLocalSearchCompletion) {
+        hideKeyboard()
+        searchCompleterVM.selectedCompletion = completion
+        searchCompleterVM.queryFragment = completion.titleWithSubtitle() // Update TextField to reflect selection
+        
+        if spotName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            spotName = completion.title // Auto-fill spot name if empty
+        }
+        
+        searchCompleterVM.getPlaceDetails(for: completion) { fullAddress, coordinates in
+            self.spotAddress = fullAddress ?? completion.titleWithSubtitle()
+            self.spotCoordinates = coordinates
+        }
+        searchCompleterVM.isShowingResults = false // Hide results list
+        focusedField = .url // Move focus to URL or category next
+    }
+    
+    private func saveSpot() async {
         guard let userId = authViewModel.userSession?.uid else {
-            alertMessage = "Error: Not logged in."
-            showAlert = true
+            presentAlert(title: "Authentication Error", message: "You must be logged in to save a spot.")
             return
         }
         guard let coordinates = spotCoordinates, searchCompleterVM.selectedCompletion != nil else {
-            alertMessage = "Please select a valid location from the search results."
-            showAlert = true
+            presentAlert(title: "Incomplete Information", message: "Please select a valid location from the search results.")
             return
         }
-
+        
         let nameToSave = spotName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let addressToSave = self.spotAddress // Already set and formatted
-
+        let addressToSave = spotAddress.trimmingCharacters(in: .whitespacesAndNewlines) // Ensure address is also trimmed
+        
         isSaving = true
+        
         spotsViewModel.addSpot(
             name: nameToSave,
             address: addressToSave,
             latitude: coordinates.latitude,
             longitude: coordinates.longitude,
-            sourceURL: spotURL, // ViewModel will handle trimming
+            sourceURL: spotURL.trimmingCharacters(in: .whitespacesAndNewlines),
+            category: selectedCategory.displayName, // Use the selected category's display name
             userId: userId
-        ) { success, message in
-            isSaving = false
-            if success {
-                alertMessage = "Spot '\(nameToSave)' saved successfully!"
-                clearForm()
-                selectedTab = 0 // Switch to List view
-
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    if let newSpot = spotsViewModel.spots.first(where: {
-                        $0.name == nameToSave && $0.address == addressToSave && $0.id != nil
-                    }) {
-                        self.locationManager.startMonitoring(spot: newSpot)
-                        print("DEBUG: Started monitoring for new spot: \(newSpot.name)")
-                    } else {
-                        print("DEBUG: Could not find newly added spot (\(nameToSave)) to start geofencing.")
-                    }
+        ) { success, errorMessage in
+            Task { @MainActor in // Ensure UI updates are on main actor
+                isSaving = false
+                if success {
+                    presentAlert(title: "Success!", message: "'\(nameToSave)' has been saved to your Sweet Spots.")
+                    clearForm()
+                    selectedTab = 0 // Navigate to the list view (assuming tag 0)
+                    // Geofencing setup would typically happen after fetching updated spots
+                    // or if the new spot object is returned directly by addSpot.
+                    // For now, let the SpotListView's updated list handle it.
+                } else {
+                    presentAlert(title: "Save Failed", message: errorMessage ?? "An unknown error occurred while saving your spot.")
                 }
-            } else {
-                alertMessage = message ?? "Failed to save spot '\(nameToSave)'. Please try again."
             }
-            showAlert = true // Show alert for both success and failure
         }
     }
-
+    
+    private func presentAlert(title: String, message: String) {
+        self.alertTitle = title
+        self.alertMessage = message
+        self.showingAlert = true
+    }
+    
     private func clearForm() {
         spotName = ""
-        resetSearchFields()
         spotURL = ""
+        selectedCategory = .other // Reset to default category
+        resetSearchFields()
     }
     
     private func resetSearchFields() {
@@ -211,24 +234,105 @@ struct AddSpotView: View {
         searchCompleterVM.selectedCompletion = nil
         searchCompleterVM.isShowingResults = false
     }
+
+    private func resetSearchFieldsButKeepQuery() {
+        spotAddress = ""
+        spotCoordinates = nil
+        // searchCompleterVM.queryFragment remains
+        searchCompleterVM.searchResults = []
+        searchCompleterVM.selectedCompletion = nil
+        searchCompleterVM.isShowingResults = false // Or manage based on queryFragment length
+    }
+    
+    private func hideKeyboard() {
+        #if canImport(UIKit)
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        #endif
+    }
 }
 
-extension MKLocalSearchCompletion {
-    // Helper to get a displayable string, as title or subtitle can sometimes be redundant
-    func titleWithSubtitle() -> String {
-        var displayString = title
-        if !subtitle.isEmpty && subtitle != title {
-            displayString += ", \(subtitle)"
+// MARK: - Themed TextField
+private struct ThemedTextField: View {
+    let title: String
+    @Binding var text: String
+    let systemImage: String? // Optional icon
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if let systemImage = systemImage {
+                Image(systemName: systemImage)
+                    .foregroundStyle(Color.themePrimary)
+                    .frame(width: 20)
+            }
+            TextField(title, text: $text, prompt: Text(title).foregroundColor(Color.themeTextSecondary.opacity(0.7)))
+                .foregroundStyle(Color.themeTextPrimary)
         }
-        return displayString
+        // Add padding and background if you want to style individual text fields like AuthTextField
+        // .padding()
+        // .background(Color.themeFieldBackground)
+        // .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
-struct AddSpotView_Previews: PreviewProvider {
-    static var previews: some View {
-        AddSpotView(selectedTab: .constant(2))
-            .environmentObject(SpotViewModel())
-            .environmentObject(AuthViewModel())
-            .environmentObject(LocationManager())
+
+// MARK: - Supporting Views (Themed)
+private struct SearchResultsList: View {
+    let results: [MKLocalSearchCompletion]
+    let onSelect: (MKLocalSearchCompletion) -> Void
+    
+    var body: some View {
+        List(results, id: \.self) { completion in
+            Button {
+                onSelect(completion)
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(completion.title)
+                        .font(.headline).foregroundStyle(Color.themeTextPrimary)
+                    Text(completion.subtitle)
+                        .font(.subheadline).foregroundStyle(Color.themeTextSecondary)
+                }
+                .padding(.vertical, 4)
+            }
+            .listRowBackground(Color.themeFieldBackground) // Theme list row
+        }
+        .listStyle(.plain)
+        .frame(minHeight: 50, maxHeight: 250) // Consider dynamic height based on content
+        .background(Color.themeFieldBackground) // Background for the list container
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.themePrimary.opacity(0.5), lineWidth: 1) // Themed border
+        )
     }
+}
+
+private struct SelectedLocationView: View {
+    let address: String
+    let iconName: String
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: iconName)
+                .foregroundStyle(Color.themePrimary)
+            Text(address)
+                .font(.caption)
+                .foregroundStyle(Color.themeTextSecondary)
+                .lineLimit(2) // Allow for slightly longer addresses
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .background(Color.themeFieldBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.themePrimary.opacity(0.3), lineWidth: 0.5))
+    }
+}
+
+// Extension MKLocalSearchCompletion remains the same
+
+#Preview {
+    AddSpotView(selectedTab: .constant(2)) // Tab index for "Add"
+        .environmentObject(SpotViewModel())
+        .environmentObject(AuthViewModel())
+        .environmentObject(LocationManager())
+        // Ensure your Color+Extensions are available in previews
 }

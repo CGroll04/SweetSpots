@@ -8,17 +8,21 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var authViewModel = AuthViewModel()
-
+    @EnvironmentObject private var authViewModel: AuthViewModel
+    
     var body: some View {
         Group {
             if authViewModel.userSession == nil {
                 AuthView()
-                    .environmentObject(authViewModel)
             } else {
                 MainTabView()
-                    .environmentObject(authViewModel)
             }
         }
+        .animation(.easeInOut, value: authViewModel.userSession)
     }
+}
+
+#Preview {
+    ContentView()
+        .environmentObject(AuthViewModel())
 }

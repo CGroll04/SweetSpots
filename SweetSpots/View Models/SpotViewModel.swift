@@ -7,7 +7,7 @@
 
 import SwiftUI
 import FirebaseFirestore
-import CoreLocation // Only if still needed for other things, not for geocoding in addSpot
+import CoreLocation
 
 @MainActor
 class SpotViewModel: ObservableObject {
@@ -17,106 +17,100 @@ class SpotViewModel: ObservableObject {
 
     private var db = Firestore.firestore()
     private var listenerRegistration: ListenerRegistration?
-    // private let geocoder = CLGeocoder() // No longer needed for adding spots
+
+    // Helper to get the path to a user's spots subcollection
+    private func userSpotsCollection(userId: String) -> CollectionReference {
+        return db.collection("users").document(userId).collection("spots")
+    }
 
     func fetchData(userId: String) {
         isLoading = true
-        listenerRegistration?.remove() // Detach previous listener if any
+        listenerRegistration?.remove()
 
-        print("Fetching data for userId: \(userId)")
-        listenerRegistration = db.collection("spots")
-            .whereField("userId", isEqualTo: userId)
+        // Now querying the subcollection: /users/{userId}/spots
+        listenerRegistration = userSpotsCollection(userId: userId)
             .order(by: "createdAt", descending: true)
             .addSnapshotListener { [weak self] querySnapshot, error in
                 guard let self = self else { return }
                 self.isLoading = false
                 if let error = error {
                     self.errorMessage = "Error fetching spots: \(error.localizedDescription)"
-                    print("Firestore listener error: \(error.localizedDescription)")
                     return
                 }
 
                 guard let documents = querySnapshot?.documents else {
-                    self.errorMessage = "No spots found or snapshot was empty."
+                    self.errorMessage = "No spots found."
                     self.spots = []
-                    print("No documents in snapshot.")
                     return
                 }
                 
-                print("Received \(documents.count) documents from Firestore.")
-
                 self.spots = documents.compactMap { document -> Spot? in
                     do {
-                        let spot = try document.data(as: Spot.self)
-                        // print("Successfully decoded spot: \(spot.name), ID: \(spot.id ?? "no id")")
+                        var spot = try document.data(as: Spot.self)
+                        if spot.userId == nil { // Ensure userId is populated if missing (e.g. for older data)
+                            spot.userId = userId
+                        }
                         return spot
                     } catch {
                         print("Error decoding spot \(document.documentID): \(error.localizedDescription)")
-                        self.errorMessage = "Error decoding spot data." // Show a generic error
                         return nil
                     }
                 }
                 
                 if !documents.isEmpty && self.spots.isEmpty {
-                     print("WARNING: Documents received but spots array is empty. Check Spot struct decoding and Codable conformance.")
+                     print("WARNING: Documents received but spots array is empty. Check Spot struct decoding and Firestore data structure for /users/\(userId)/spots.")
                 }
                 
-                // Clear error message if spots are successfully loaded or if there are no spots (not an error)
                 if !self.spots.isEmpty || documents.isEmpty {
                     self.errorMessage = nil
                 }
-                print("SpotsViewModel updated spots. Count: \(self.spots.count)")
             }
     }
 
-    // Updated addSpot method
-    func addSpot(name: String, address: String, latitude: Double, longitude: Double, sourceURL: String?, userId: String, completion: @escaping (Bool, String?) -> Void) {
+    func addSpot(name: String, address: String, latitude: Double, longitude: Double, sourceURL: String?, category: String, userId: String, completion: @escaping (Bool, String?) -> Void) {
         isLoading = true
 
+        // The Spot model still includes userId for clarity/denormalization
         let newSpot = Spot(
             userId: userId,
             name: name,
             address: address,
             latitude: latitude,
             longitude: longitude,
-            sourceURL: sourceURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true ? nil : sourceURL?.trimmingCharacters(in: .whitespacesAndNewlines)
-            // createdAt will be set by @ServerTimestamp
+            sourceURL: sourceURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true ? nil : sourceURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+            category: category
         )
 
         do {
-            _ = try self.db.collection("spots").addDocument(from: newSpot) { error in
+            // Adding document to the subcollection: /users/{userId}/spots
+            _ = try userSpotsCollection(userId: userId).addDocument(from: newSpot) { error in
                 self.isLoading = false
                 if let error = error {
-                    print("Error adding spot to Firestore: \(error.localizedDescription)")
                     completion(false, "Error adding spot: \(error.localizedDescription)")
                 } else {
-                    print("Spot '\(newSpot.name)' added successfully to Firestore.")
-                    completion(true, nil) // Success
+                    completion(true, nil)
                 }
             }
         } catch {
             self.isLoading = false
-            print("Error encoding spot for Firestore: \(error.localizedDescription)")
             completion(false, "Error encoding spot: \(error.localizedDescription)")
         }
     }
 
-    func deleteSpot(_ spot: Spot) {
-        guard let spotId = spot.id else {
-            errorMessage = "Error: Spot ID missing for deletion."
-            print("Error: Spot ID missing for deletion: \(spot.name)")
+    func deleteSpot(_ spot: Spot) async {
+        guard let userId = spot.userId, let spotId = spot.id else { // Ensure userId is available for path
+            errorMessage = "Error: Spot or User ID missing for deletion."
             return
         }
         isLoading = true
-        db.collection("spots").document(spotId).delete { [weak self] error in
-            self?.isLoading = false
-            if let error = error {
-                self?.errorMessage = "Error deleting spot: \(error.localizedDescription)"
-                print("Error deleting spot \(spotId): \(error.localizedDescription)")
-            } else {
-                print("Spot \(spotId) deleted successfully.")
-            }
+        do {
+            // Deleting document from the subcollection: /users/{userId}/spots/{spotId}
+            try await userSpotsCollection(userId: userId).document(spotId).delete()
+            self.errorMessage = nil
+        } catch {
+            self.errorMessage = "Error deleting spot: \(error.localizedDescription)"
         }
+        isLoading = false
     }
 
     func clearData() {
@@ -125,6 +119,5 @@ class SpotViewModel: ObservableObject {
         spots = []
         errorMessage = nil
         isLoading = false
-        print("SpotsViewModel data cleared.")
     }
 }
