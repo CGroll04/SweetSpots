@@ -7,11 +7,19 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		278FF5742DED025200578BF1 /* SweetSpotsShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 278FF56A2DED025200578BF1 /* SweetSpotsShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		27DDDC6A2DC81107007F073E /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 27DDDC692DC81107007F073E /* FirebaseAuth */; };
 		27DDDC6C2DC81107007F073E /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 27DDDC6B2DC81107007F073E /* FirebaseFirestore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		278FF5722DED025200578BF1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 27DDDC362DC81019007F073E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 278FF5692DED025200578BF1;
+			remoteInfo = SweetSpotsShare;
+		};
 		27DDDC4C2DC8101B007F073E /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 27DDDC362DC81019007F073E /* Project object */;
@@ -28,13 +36,35 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		278FF5752DED025200578BF1 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				278FF5742DED025200578BF1 /* SweetSpotsShare.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		278FF56A2DED025200578BF1 /* SweetSpotsShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SweetSpotsShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		27DDDC3E2DC81019007F073E /* SweetSpots.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SweetSpots.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		27DDDC4B2DC8101B007F073E /* SweetSpotsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SweetSpotsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		27DDDC552DC8101B007F073E /* SweetSpotsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SweetSpotsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		278FF5792DED025200578BF1 /* Exceptions for "SweetSpotsShare" folder in "SweetSpotsShare" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 278FF5692DED025200578BF1 /* SweetSpotsShare */;
+		};
 		27C0FAE52DDBC95200C9A039 /* Exceptions for "SweetSpots" folder in "SweetSpots" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -45,6 +75,14 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		278FF56B2DED025200578BF1 /* SweetSpotsShare */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				278FF5792DED025200578BF1 /* Exceptions for "SweetSpotsShare" folder in "SweetSpotsShare" target */,
+			);
+			path = SweetSpotsShare;
+			sourceTree = "<group>";
+		};
 		27DDDC402DC81019007F073E /* SweetSpots */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -66,6 +104,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		278FF5672DED025200578BF1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		27DDDC3B2DC81019007F073E /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -98,6 +143,7 @@
 				27DDDC402DC81019007F073E /* SweetSpots */,
 				27DDDC4E2DC8101B007F073E /* SweetSpotsTests */,
 				27DDDC582DC8101B007F073E /* SweetSpotsUITests */,
+				278FF56B2DED025200578BF1 /* SweetSpotsShare */,
 				27DDDC3F2DC81019007F073E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -108,6 +154,7 @@
 				27DDDC3E2DC81019007F073E /* SweetSpots.app */,
 				27DDDC4B2DC8101B007F073E /* SweetSpotsTests.xctest */,
 				27DDDC552DC8101B007F073E /* SweetSpotsUITests.xctest */,
+				278FF56A2DED025200578BF1 /* SweetSpotsShare.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -115,6 +162,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		278FF5692DED025200578BF1 /* SweetSpotsShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 278FF5782DED025200578BF1 /* Build configuration list for PBXNativeTarget "SweetSpotsShare" */;
+			buildPhases = (
+				278FF5662DED025200578BF1 /* Sources */,
+				278FF5672DED025200578BF1 /* Frameworks */,
+				278FF5682DED025200578BF1 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				278FF56B2DED025200578BF1 /* SweetSpotsShare */,
+			);
+			name = SweetSpotsShare;
+			packageProductDependencies = (
+			);
+			productName = SweetSpotsShare;
+			productReference = 278FF56A2DED025200578BF1 /* SweetSpotsShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		27DDDC3D2DC81019007F073E /* SweetSpots */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 27DDDC5F2DC8101B007F073E /* Build configuration list for PBXNativeTarget "SweetSpots" */;
@@ -122,10 +191,12 @@
 				27DDDC3A2DC81019007F073E /* Sources */,
 				27DDDC3B2DC81019007F073E /* Frameworks */,
 				27DDDC3C2DC81019007F073E /* Resources */,
+				278FF5752DED025200578BF1 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				278FF5732DED025200578BF1 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				27DDDC402DC81019007F073E /* SweetSpots */,
@@ -192,9 +263,12 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 1630;
+				LastSwiftUpdateCheck = 1640;
 				LastUpgradeCheck = 1630;
 				TargetAttributes = {
+					278FF5692DED025200578BF1 = {
+						CreatedOnToolsVersion = 16.4;
+					};
 					27DDDC3D2DC81019007F073E = {
 						CreatedOnToolsVersion = 16.3;
 					};
@@ -228,11 +302,19 @@
 				27DDDC3D2DC81019007F073E /* SweetSpots */,
 				27DDDC4A2DC8101B007F073E /* SweetSpotsTests */,
 				27DDDC542DC8101B007F073E /* SweetSpotsUITests */,
+				278FF5692DED025200578BF1 /* SweetSpotsShare */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		278FF5682DED025200578BF1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		27DDDC3C2DC81019007F073E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -257,6 +339,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		278FF5662DED025200578BF1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		27DDDC3A2DC81019007F073E /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -281,6 +370,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		278FF5732DED025200578BF1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 278FF5692DED025200578BF1 /* SweetSpotsShare */;
+			targetProxy = 278FF5722DED025200578BF1 /* PBXContainerItemProxy */;
+		};
 		27DDDC4D2DC8101B007F073E /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 27DDDC3D2DC81019007F073E /* SweetSpots */;
@@ -294,6 +388,58 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		278FF5762DED025200578BF1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = BQJVVK7V3Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SweetSpotsShare/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = SweetSpotsShare;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.charliegroll.SweetSpots.SweetSpotsShare;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		278FF5772DED025200578BF1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = BQJVVK7V3Q;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = SweetSpotsShare/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = SweetSpotsShare;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.charliegroll.SweetSpots.SweetSpotsShare;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		27DDDC5D2DC8101B007F073E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -439,9 +585,13 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.charliegroll.SweetSpots;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -469,9 +619,13 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.charliegroll.SweetSpots;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
@@ -550,6 +704,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		278FF5782DED025200578BF1 /* Build configuration list for PBXNativeTarget "SweetSpotsShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				278FF5762DED025200578BF1 /* Debug */,
+				278FF5772DED025200578BF1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		27DDDC392DC81019007F073E /* Build configuration list for PBXProject "SweetSpots" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

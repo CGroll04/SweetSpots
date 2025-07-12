@@ -2,862 +2,496 @@
 //  MapView.swift
 //  SweetSpots
 //
-//  Enhanced production-ready version with improved performance, accessibility, and error handling
+//  Enhanced version with geofencing integration
 //
 
 import SwiftUI
 import MapKit
-import CoreLocation
-import os.log
 
 struct MapView: View {
-    
-    // MARK: - Logger
-    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "SweetSpots", category: "MapView")
-    
     // MARK: - Environment Objects
     @EnvironmentObject private var spotsViewModel: SpotViewModel
     @EnvironmentObject private var locationManager: LocationManager
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
-    @EnvironmentObject private var appCoordinator: AppCoordinator
-
+    @EnvironmentObject private var navigationViewModel: NavigationViewModel
 
     // MARK: - State Variables
-    @State private var cameraPosition: MapCameraPosition = .region(MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
-        span: MKCoordinateSpan(latitudeDelta: 0.5, longitudeDelta: 0.5)
-    ))
+    @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var viewingRegion: MKCoordinateRegion? = nil
     
     @State private var selectedSpotIdForSheet: String? = nil
-    @State private var selectedSpotForAnnotation: Spot? = nil
-    @State private var previousSelectedSpot: Spot? = nil
+    @State private var selectedSpot: Spot? = nil
+    @State private var selectedSpotId: String? = nil
+    
+    @State private var showClarityPopup: Bool = false
+    
+    @State private var isNavigating: Bool = false // <<<< NEW: To track
 
     @State private var selectedCategoryFilters: Set<SpotCategory> = []
-    @State private var initialCameraHasBeenSetByLocation = false
-    @State private var isInitialized = false
+    @State private var initialCameraHasBeenSet = false
     
-    // MARK: - Geofencing Display Options
+    // ✅ ADDED: Geofencing display options
     @State private var showGeofenceRadii: Bool = false
-    @AppStorage(UserDefaultsKeys.globalGeofencingEnabledKey)
-    private var globalGeofencingEnabled: Bool = true
-    
-    // MARK: - Performance & Error Handling
-    @State private var alertConfig: AlertConfig?
-    @State private var isLocationLoading = false
-    @State private var mapInteractionTask: Task<Void, Never>?
-    @State private var cameraUpdateTask: Task<Void, Never>?
-    @State private var lastGeofenceSync = Date.distantPast
-    // Add these properties to the struct
-    @State private var locationLoadingTask: Task<Void, Never>?
-    @State private var geofenceValidationTask: Task<Void, Never>?
-    
-    // MARK: - Alert Configuration
-    struct AlertConfig: Identifiable {
-        let id = UUID()
-        let title: String
-        let message: String
-        let primaryAction: AlertAction?
-        let secondaryAction: AlertAction?
-
-        struct AlertAction {
-            let title: String
-            let role: ButtonRole?
-            let action: () -> Void
-        }
-    }
+    @AppStorage("globalGeofencingEnabled") private var globalGeofencingEnabled: Bool = true
     
     // MARK: - Computed Properties
     private var spotsForMap: [Spot] {
-        let filteredSpots: [Spot]
         if selectedCategoryFilters.isEmpty {
-            filteredSpots = spotsViewModel.spots
+            return spotsViewModel.spots
         } else {
-            filteredSpots = spotsViewModel.spots.filter { selectedCategoryFilters.contains($0.category) }
+            return spotsViewModel.spots.filter { selectedCategoryFilters.contains($0.category) }
         }
-        
-        logger.debug("Displaying \(filteredSpots.count) spots on map")
-        return filteredSpots
     }
     
+    // ✅ ADDED: Spots with active geofences
     private var spotsWithGeofences: [Spot] {
         spotsForMap.filter { $0.wantsNearbyNotification && globalGeofencingEnabled }
     }
     
-    private var isShowingSpotSheet: Binding<Bool> {
-        $selectedSpotIdForSheet.isNotNil()
+    // ✅ FIXED: Computed property to get the selected spot from the current data
+    private var selectedSpotForAnnotation: Spot? {
+        guard let selectedId = selectedSpotId else { return nil }
+        return spotsViewModel.spots.first { $0.id == selectedId }
     }
     
-    private var hasActiveFilters: Bool {
-        !selectedCategoryFilters.isEmpty
+    private var isShowingSpotSheet: Binding<Bool> {
+        Binding(
+            get: { selectedSpotIdForSheet != nil },
+            set: { isShowing in
+                if !isShowing {
+                    selectedSpotIdForSheet = nil
+                    // ✅ FIXED: Clear the selected spot ID as well
+                    selectedSpotId = nil
+                }
+            }
+        )
     }
     
     // MARK: - Body
     var body: some View {
         NavigationStack {
-            GeometryReader { geometry in
-                ZStack {
-                    mapContentWithOverlays
-                    
-                    // Loading overlay for location operations
-                    if isLocationLoading {
-                        loadingOverlay
+            ZStack(alignment: .top) { // Use ZStack to overlay navigation UI
+                // mapViewWithOverlays should have NO modifiers here
+                mapViewWithOverlays
+                
+                geofenceClarityOverlay()
+            
+                // Show turn-by-turn UI when navigating
+                if navigationViewModel.isNavigating {
+                    VStack {
+                        TurnByTurnInstructionView()
+                        Spacer()
+                        EndNavigationButton()
+                            .padding(.bottom, 100)
+                    }
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .top).combined(with: .opacity),
+                        removal: .move(edge: .bottom).combined(with: .opacity)
+                    ))
+                }
+                
+                // Show "Calculating..." overlay
+                if navigationViewModel.isCalculatingRoute {
+                    RouteInfoCard(message: "Calculating route...")
+                }
+                
+                // Show error overlay
+                if let error = navigationViewModel.routeCalculationError {
+                    RouteInfoCard(message: error, isError: true) {
+                        navigationViewModel.stopNavigation() // Let the user dismiss the error
                     }
                 }
             }
-            .navigationTitle("Map")
-            .navigationBarTitleDisplayMode(.inline)
+            // --- FIXED: All these modifiers now apply to the ZStack ---
+            .onAppear { handleInitialLocationSetup() }
+            .task { await fallbackInitialCameraIfNeeded() }
+            .onChange(of: locationManager.userLocation, handleLocationChange)
+            .onChange(of: selectedSpot, handleSpotSelection)
+            .onChange(of: navigationViewModel.route, handleRouteChange)
+            // ✅ ADD THIS MODIFIER
+            .onChange(of: navigationViewModel.isNavigating) { _, isNavigating in
+                if isNavigating, let userLocation = locationManager.userLocation {
+                    // When navigation starts, immediately snap the camera to the user's location in navigation mode.
+                    updateCameraForNavigation(userLocation: userLocation)
+                }
+            }
             .toolbar {
-                toolbarContent
+                // Do not show the toolbar during turn-by-turn navigation
+                if !navigationViewModel.isNavigating {
+                    // Title on the left
+                    ToolbarItemGroup(placement: .navigationBarLeading) {
+                        Text("My SweetSpots")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                    }
+                    
+                    // Buttons on the right
+                    ToolbarItemGroup(placement: .navigationBarTrailing) {
+                        geofenceToggleButton()
+                        mapCategoryFilterMenu()
+                    }
+                }
             }
-            .onAppear {
-                handleViewAppeared()
-            }
-            .onChange(of: locationManager.userLocation) { _, newLocation in
-                handleUserLocationChanged(newLocation)
-            }
-            .onChange(of: selectedSpotForAnnotation) { _, newSpot in
-                handleSpotSelectionChanged(to: newSpot)
-            }
-            .onChange(of: appCoordinator.pendingLaunchContent) { _, newContent in
-                handleLaunchContent(newContent)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .applicationDidBecomeActive)) { _ in
-                handleAppBecameActive()
-            }
-            .alert(item: $alertConfig) { config in
-                createAlert(from: config)
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Map view showing \(spotsForMap.count) spots")
-        }
-        .onDisappear {
-            cleanupTasks()
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarHidden(navigationViewModel.isNavigating)
+            .animation(.default, value: navigationViewModel.isNavigating)
+            .animation(.default, value: navigationViewModel.isCalculatingRoute)
         }
     }
     
     // MARK: - Map Content and Overlays
-    private var mapContentWithOverlays: some View {
-        Map(position: $cameraPosition, selection: $selectedSpotForAnnotation) {
-            // User location annotation
+    @ViewBuilder
+    private func geofenceClarityOverlay() -> some View {
+        if showClarityPopup {
+            VStack {
+                Spacer() // Pushes to center
+                
+                HStack {
+                    Image(systemName: showGeofenceRadii ? "bell.circle.fill" : "bell.circle")
+                    Text(showGeofenceRadii ? "Showing Alert Zones" : "Hiding Alert Zones")
+                }
+                .font(.caption)
+                .fontWeight(.semibold)
+                .padding(12)
+                .background(.ultraThinMaterial)
+                .clipShape(Capsule())
+                .shadow(radius: 5)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                
+                Spacer()
+            }
+            .padding(.bottom, 100)
+            .allowsHitTesting(false)
+            .onAppear {
+                // Automatically hide this popup after 3 seconds
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    withAnimation {
+                        // This only hides the popup, not the zones themselves
+                        showClarityPopup = false
+                    }
+                }
+            }
+        }
+    }
+    
+    // This is the core Map view.
+    private var coreMapView: some View {
+        Map(position: $cameraPosition, selection: $selectedSpot) {
             UserAnnotation()
-
-            // Spot annotations with enhanced accessibility
+            
+            if let route = navigationViewModel.route {
+                MapPolyline(route.polyline).stroke(Color.blue.opacity(0.8), lineWidth: 6)
+            }
+            
             ForEach(spotsForMap) { spot in
                 Annotation(spot.name, coordinate: spot.coordinate) {
-                    SpotAnnotationView(
-                        spot: spot,
-                        isSelected: spot.id == selectedSpotForAnnotation?.id,
-                        hasGeofence: spot.wantsNearbyNotification && globalGeofencingEnabled
-                    )
-                    .onTapGesture {
-                        handleSpotAnnotationTapped(spot)
-                    }
-                    .accessibilityLabel(spotAccessibilityLabel(for: spot))
-                    .accessibilityHint("Double tap to view details")
-                    .accessibilityAddTraits(.isButton)
+                    SpotAnnotationView(spot: spot, isSelected: spot.id == selectedSpot?.id)
+                        .onTapGesture { selectedSpot = spot }
                 }
                 .tag(spot)
             }
             
-            // Geofence radius overlays
             if showGeofenceRadii {
                 ForEach(spotsWithGeofences) { spot in
                     MapCircle(center: spot.coordinate, radius: spot.notificationRadiusMeters)
-                        .foregroundStyle(Color.blue.opacity(0.15))
-                        .stroke(Color.blue.opacity(0.6), lineWidth: 2)
+                        .foregroundStyle(Color.blue.opacity(0.2)).stroke(Color.blue.opacity(0.6), lineWidth: 2)
                 }
-            }
-        }
-        .mapStyle(.standard(pointsOfInterest: .excludingAll, showsTraffic: false))
-        .mapControls {
-            if #available(iOS 17.0, *) {
-                MapPitchToggle()
-            }
-            MapCompass()
-                .mapControlVisibility(.visible)
-        }
-        .overlay(alignment: .bottomTrailing) {
-            MapZoomControls(
-                currentRegion: $viewingRegion,
-                cameraPosition: $cameraPosition
-            )
-            .environmentObject(locationManager)
-            .padding(.trailing, 15)
-            .padding(.bottom, 80)
-        }
-        .overlay(alignment: .topLeading) {
-            mapStatusOverlays
-        }
-        .overlay(alignment: .bottom) {
-            if hasActiveFilters {
-                activeFiltersIndicator
-                    .padding(.bottom, 100)
             }
         }
         .onMapCameraChange(frequency: .onEnd) { context in
-            // This is called automatically when the user stops interacting with the map.
-            self.viewingRegion = context.region
-        }
-        .sheet(isPresented: isShowingSpotSheet) {
-            spotDetailSheet
-        }
-        .alert(item: $locationManager.geofenceTriggeredAlert) { alertDetails in
-            geofenceAlert(alertDetails)
-        }
-    }
-    
-    // MARK: - Overlay Views
-    private var loadingOverlay: some View {
-        ZStack {
-            Color.black.opacity(0.3)
-                .ignoresSafeArea()
-            
-            VStack(spacing: 16) {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .blue))
-                    .scaleEffect(1.2)
-                
-                Text("Updating location...")
-                    .font(.subheadline)
-                    .foregroundColor(.primary)
+                self.viewingRegion = context.region
             }
-            .padding(24)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .shadow(UIUtils.cardShadow)
-        }
-        .transition(.opacity)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Loading location")
     }
     
-    @ViewBuilder
-    private var mapStatusOverlays: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Geofence status
-            if globalGeofencingEnabled && !spotsWithGeofences.isEmpty {
-                GeofenceStatusView(
-                    activeGeofencesCount: spotsWithGeofences.count,
-                    authorizationStatus: locationManager.authorizationStatus
+    // Chain modifiers onto the core map view. This breaks up the expression.
+    private var mapViewWithOverlays: some View {
+        coreMapView
+            .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .excludingAll, showsTraffic: false))
+            .mapControls { MapPitchToggle(); MapCompass() }
+            .overlay(alignment: .bottomTrailing) {
+                MapZoomControls(
+                    currentRegion: $viewingRegion, // Pass the binding
+                    cameraPosition: $cameraPosition
                 )
+                .environmentObject(locationManager)
+                .padding(.trailing, 15)
+                .padding(.bottom, 80)
+            }
+            .overlay(alignment: .topLeading) { // <<<< SINGLE .topLeading OVERLAY
+                VStack(alignment: .leading, spacing: 8) { // Arrange vertically
+                    // Always show route info if it exists
+                    if navigationViewModel.isCalculatingRoute || navigationViewModel.route != nil || navigationViewModel.routeCalculationError != nil {
+                        RouteInfoCard()
+                    }
+
+                    // Show geofence status if applicable and no route is showing
+                    // Or you can decide to show both. Let's show both.
+                    if globalGeofencingEnabled && !spotsWithGeofences.isEmpty {
+                        geofenceStatusOverlay()
+                    }
+                }
+            }
+            .sheet(item: $selectedSpot) { spot in
+                // ✅ THIS IS THE FIX:
+                // We now initialize SpotDetailView with the ID from the selected spot.
+                SpotDetailView(spotId: spot.id ?? "")
+                    .environmentObject(authViewModel)
+                    .environmentObject(spotsViewModel)
+                    .environmentObject(locationManager)
+                    .environmentObject(collectionViewModel)
+                    .environmentObject(navigationViewModel)
+                    .presentationDetents([.medium, .large])
+            }
+    }
+    
+    // ✅ ADDED: Geofence toggle button
+    private func geofenceToggleButton() -> some View {
+        Button {
+            withAnimation {
+                // Toggle the state for the blue circles
+                showGeofenceRadii.toggle()
+                // And separately, trigger the informational popup
+                showClarityPopup = true
+            }
+        } label: {
+            Image(systemName: showGeofenceRadii ? "bell.circle.fill" : "bell.circle")
+                .foregroundStyle(showGeofenceRadii ? Color.blue : Color.themePrimary)
+                .symbolEffect(.bounce, value: showGeofenceRadii)
+        }
+    }
+    
+    // ✅ ADDED: Geofence status overlay
+    private func geofenceStatusOverlay() -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "location.circle.fill")
+                    .foregroundColor(.blue)
+                    .font(.caption)
+                Text("\(spotsWithGeofences.count) active alerts")
+                    .font(.caption)
+                    .fontWeight(.medium)
             }
             
-            // Location status
-            if locationManager.authorizationStatus == .denied || locationManager.authorizationStatus == .restricted {
-                LocationPermissionWarningView {
-                    promptForLocationPermission()
+            if locationManager.authorizationStatus != .authorizedAlways {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .font(.caption2)
+                    Text("Need Always permission")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
                 }
             }
         }
+        .padding(8)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .padding(.leading, 16)
         .padding(.top, 16)
     }
     
-    private var activeFiltersIndicator: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                .foregroundColor(.blue)
-            
-            Text("\(selectedCategoryFilters.count) filter\(selectedCategoryFilters.count == 1 ? "" : "s") active")
-                .font(.caption)
-                .fontWeight(.medium)
-            
-            Button("Clear") {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    selectedCategoryFilters.removeAll()
-                }
-                UIUtils.hapticFeedback(.light)
-            }
-            .font(.caption)
-            .foregroundColor(.blue)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 20))
-        .shadow(UIUtils.lightShadow)
-        .transition(.asymmetric(
-            insertion: .move(edge: .bottom).combined(with: .opacity),
-            removal: .move(edge: .bottom).combined(with: .opacity)
-        ))
-    }
-    
-    @ViewBuilder
-    private var spotDetailSheet: some View {
-        if let spotId = selectedSpotIdForSheet {
-            SpotDetailView(spotId: spotId)
-                .environmentObject(authViewModel)
-                .environmentObject(spotsViewModel)
-                .environmentObject(locationManager)
-                .environmentObject(collectionViewModel)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
-    }
-    
-    // MARK: - Toolbar
-    @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .navigationBarTrailing) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    showGeofenceRadii.toggle()
-                }
-                UIUtils.hapticFeedback(.light)
-            } label: {
-                Image(systemName: showGeofenceRadii ? "circle.dashed" : "circle.dashed.inset.filled")
-                    .foregroundStyle(showGeofenceRadii ? Color.blue : Color.secondary)
-            }
-            .accessibilityLabel(showGeofenceRadii ? "Hide geofence zones" : "Show geofence zones")
-            .disabled(spotsWithGeofences.isEmpty)
-            
-            mapCategoryFilterMenu()
-        }
-        
-        ToolbarItemGroup(placement: .navigationBarLeading) {
-            Button {
-                recenterOnUserLocation()
-            } label: {
-                Image(systemName: locationManager.userLocation != nil ? "location.fill" : "location.slash")
-                    .foregroundStyle(locationManager.userLocation != nil ? Color.blue : Color.secondary)
-            }
-            .accessibilityLabel("Center on current location")
-            .disabled(locationManager.userLocation == nil)
-        }
-    }
-    
-    // MARK: - Filter Menu
+    // MARK: - Filter Menu (Enhanced)
     private func mapCategoryFilterMenu() -> some View {
         Menu {
             Section("Filter by Category") {
-                Button(action: {
-                    selectedCategoryFilters.removeAll()
-                    UIUtils.hapticFeedback(.light)
-                }) {
+                Button(action: { selectedCategoryFilters.removeAll() }) {
                     Label("All Categories", systemImage: selectedCategoryFilters.isEmpty ? "checkmark.circle.fill" : "circle")
                 }
-                
                 Divider()
-                
                 ForEach(SpotCategory.allCases) { category in
-                    let spotCount = spotsViewModel.spots.filter { $0.category == category }.count
-                    let isSelected = selectedCategoryFilters.contains(category)
-                    
-                    Button(action: {
-                        toggleCategoryFilter(category)
-                    }) {
-                        HStack {
-                            Label(category.displayName, systemImage: category.systemImageName)
-                            Spacer()
-                            if isSelected {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(.blue)
-                            }
-                            Text("(\(spotCount))")
-                                .foregroundColor(.secondary)
+                    Toggle(isOn: Binding(
+                        get: { selectedCategoryFilters.contains(category) },
+                        set: { isSelected in
+                            if isSelected { selectedCategoryFilters.insert(category) }
+                            else { selectedCategoryFilters.remove(category) }
                         }
-                    }
-                }
-            }
-            
-            if globalGeofencingEnabled && !spotsWithGeofences.isEmpty {
-                Section("Proximity Alerts") {
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            showGeofenceRadii.toggle()
-                        }
-                        UIUtils.hapticFeedback(.light)
-                    }) {
-                        Label(
-                            showGeofenceRadii ? "Hide Alert Zones" : "Show Alert Zones",
-                            systemImage: showGeofenceRadii ? "eye.slash" : "eye"
-                        )
-                    }
-                    
-                    Button(action: {
-                        Task {
-                            await validateGeofenceStatus()
-                        }
-                    }) {
-                        Label("Refresh Alerts", systemImage: "arrow.clockwise")
+                    )) {
+                        Label(category.displayName, systemImage: category.systemImageName)
                     }
                 }
             }
         } label: {
             Label("Filter", systemImage: selectedCategoryFilters.isEmpty ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
-                .foregroundStyle(Color.blue)
-        }
-        .accessibilityLabel("Map filters and options")
-    }
-    
-    // MARK: - Lifecycle Methods
-    private func handleViewAppeared() {
-        guard !isInitialized else { return }
-        
-        logger.info("MapView appeared")
-        
-        Task {
-            await performInitialSetup()
-            await MainActor.run {
-                isInitialized = true
-            }
+                .foregroundStyle(Color.themePrimary)
         }
     }
     
-    private func performInitialSetup() async {
-        await MainActor.run {
-            setupInitialLocationHandling()
-        }
-        
-        // Validate geofence status after setup
-        do {
-            try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
-            await validateGeofenceStatus()
-        } catch {
-            logger.debug("Initial setup sleep interrupted")
-        }
-    }
-    
-    private func setupInitialLocationHandling() {
-        // Request location permission if not determined
-        if locationManager.authorizationStatus == .notDetermined {
+    // MARK: - Enhanced Location and Navigation Logic
+    private func handleInitialLocationSetup() {
+        if locationManager.userLocation == nil {
             locationManager.requestLocationAuthorization(aimForAlways: false)
         }
         
-        // Start location updates if authorized
-        if locationManager.authorizationStatus == .authorizedWhenInUse ||
-           locationManager.authorizationStatus == .authorizedAlways {
-            if !locationManager.isRequestingLocationUpdates {
-                locationManager.startUpdatingUserLocation()
-            }
+        if locationManager.authorizationStatus == .authorizedWhenInUse || locationManager.authorizationStatus == .authorizedAlways {
+            locationManager.startUpdatingUserLocation()
         }
         
-        // Set initial camera position
-        setInitialCameraPosition()
-    }
-    
-    private func setInitialCameraPosition() {
-        if let userCoordinate = locationManager.userLocation?.coordinate {
-            logger.info("Setting initial camera to user location")
+        if let userCoordinate = locationManager.userLocation?.coordinate, !initialCameraHasBeenSet {
+            print("MapView: User location available on appear, setting initial camera.")
             let userRegion = MKCoordinateRegion(
                 center: userCoordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
             )
             cameraPosition = .region(userRegion)
             viewingRegion = userRegion
-            initialCameraHasBeenSetByLocation = true
-        } else if let firstSpot = spotsViewModel.spots.first {
-            logger.info("Setting initial camera to first spot")
-            let spotRegion = MKCoordinateRegion(
-                center: firstSpot.coordinate,
-                span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
-            )
-            cameraPosition = .region(spotRegion)
-            viewingRegion = spotRegion
+            initialCameraHasBeenSet = true
         }
     }
     
-    // MARK: - Event Handlers
-    private func handleUserLocationChanged(_ newLocation: CLLocation?) {
-        guard let userCoordinate = newLocation?.coordinate,
-              !initialCameraHasBeenSetByLocation else { return }
+    private func handleLocationChange(_ oldLocation: CLLocation?, _ newLocation: CLLocation?) {
+        // This is still the same and still crucial for the camera
+        if let userCoordinate = newLocation?.coordinate, !initialCameraHasBeenSet {
+            setInitialCamera(to: userCoordinate)
+        }
         
-        logger.info("User location updated, setting camera")
-        let userRegion = MKCoordinateRegion(
-            center: userCoordinate,
-            span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
-        )
+        // Let NavigationViewModel handle updates. We just update the camera.
+        if navigationViewModel.isNavigating, let newLocation = newLocation {
+            updateCameraForNavigation(userLocation: newLocation)
+        }
+    }
+    
+    private func handleRouteChange(_ oldRoute: MKRoute?, _ newRoute: MKRoute?) {
+        // This function is now just for setting the camera when a route first appears
+        if let route = newRoute, !navigationViewModel.isNavigating {
+            // This case should not happen in the new flow, but as a fallback:
+            let rect = route.polyline.boundingMapRect
+            withAnimation(.easeOut(duration: 0.7)) { cameraPosition = .rect(rect.paddedBy(factor: 1.4)) }
+        } else if newRoute == nil {
+            // Route was cleared (navigation ended)
+            if let userLocation = locationManager.userLocation {
+                withAnimation {
+                    cameraPosition = .region(MKCoordinateRegion(center: userLocation.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)))
+                }
+            }
+        }
+    }
+    
+    private func handleSpotSelection() {
+        if let spot = selectedSpotForAnnotation {
+            selectedSpotIdForSheet = spot.id
+            
+            withAnimation(.easeInOut(duration: 0.5)) {
+                cameraPosition = .region(MKCoordinateRegion(
+                    center: spot.coordinate,
+                    span: viewingRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+                ))
+            }
+        }
+    }
+    
+    private func handleGeofenceNavigation(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let spotId = userInfo["spotId"] as? String else {
+            return
+        }
+        
+        print("MapView: Navigating to spot from geofence notification: \(spotId)")
+        navigateToSpot(spotId: spotId)
+    }
+    
+    private func navigateToSpot(spotId: String) {
+        guard let spot = spotsViewModel.spots.first(where: { $0.id == spotId }) else {
+            print("MapView: Could not find spot with ID: \(spotId)")
+            return
+        }
+        
+        selectedSpotId = spot.id
+        selectedSpotIdForSheet = spotId
         
         withAnimation(.easeInOut(duration: 0.8)) {
-            cameraPosition = .region(userRegion)
-        }
-        viewingRegion = userRegion
-        initialCameraHasBeenSetByLocation = true
-    }
-    
-    private func handleSpotSelectionChanged(to newSpot: Spot?) {
-        guard let spot = newSpot else { return }
-        
-        // Animate the camera to the selected spot
-        animateToSpot(spot)
-        
-        // Open the detail sheet
-        selectedSpotIdForSheet = spot.id
-    }
-    
-    private func handleCameraChanged(_ context: MapCameraUpdateContext) {
-        // Debounce region updates
-        mapInteractionTask?.cancel()
-        mapInteractionTask = Task { @MainActor in
-            do {
-                try await Task.sleep(nanoseconds: 300_000_000) // 0.3 second delay
-                guard !Task.isCancelled else { return }
-                viewingRegion = context.region
-            } catch {
-                logger.debug("Map interaction task cancelled")
-            }
-        }
-    }
-    
-    private func handleSpotAnnotationTapped(_ spot: Spot) {
-        logger.info("Spot annotation tapped: \(spot.name)")
-        selectedSpotForAnnotation = spot
-        UIUtils.hapticFeedback(.light)
-    }
-    
-    private func handleLaunchContent(_ content: LaunchContent?) {
-        guard let content else { return }
-        
-        switch content {
-        case .spot(let id):
-            navigateToSpot(spotId: id)
-        case .sharedURL:
-            // MapView probably doesn't need to handle this, but you could if desired.
-            // For example, by showing a sheet.
-            break
-        }
-        
-        // Clear the content so it doesn't trigger again.
-        appCoordinator.clearPendingLaunchContent()
-    }
-    
-    private func handleAppBecameActive() {
-        logger.debug("App became active, refreshing map state")
-        
-        Task {
-            do {
-                try await Task.sleep(nanoseconds: 500_000_000) // 0.5 second delay
-                await validateGeofenceStatus()
-            } catch {
-                logger.debug("App active validation sleep interrupted")
-            }
-        }
-    }
-    
-    // MARK: - Navigation Methods
-    private func animateToSpot(_ spot: Spot) {
-        let spotRegion = MKCoordinateRegion(
-            center: spot.coordinate,
-            span: viewingRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-        )
-        
-        withAnimation(.easeInOut(duration: 0.6)) {
-            cameraPosition = .region(spotRegion)
-        }
-    }
-    
-    private func navigateToSpot(spotId: String) async {
-        guard let spot = spotsViewModel.spots.first(where: { $0.id == spotId }) else {
-            logger.error("Could not find spot with ID: \(spotId)")
-            await MainActor.run {
-                showError("Spot not found", message: "The requested spot could not be located.")
-            }
-            return
-        }
-        
-        await MainActor.run {
-            // Set the selected spot and show sheet
-            selectedSpotForAnnotation = spot
-            selectedSpotIdForSheet = spotId
-            
-            // Animate to the spot location with tighter zoom
-            let spotRegion = MKCoordinateRegion(
+            cameraPosition = .region(MKCoordinateRegion(
                 center: spot.coordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005)
-            )
-            
-            withAnimation(.easeInOut(duration: 0.8)) {
-                cameraPosition = .region(spotRegion)
-            }
-            
-            logger.info("Navigated to spot '\(spot.name)'")
-        }
-    }
-    
-    private func recenterOnUserLocation() {
-        guard let userCoordinate = locationManager.userLocation?.coordinate else {
-            requestLocationWithFeedback()
-            return
+            ))
         }
         
-        logger.info("Recentering on user location")
-        
-        let userRegion = MKCoordinateRegion(
-            center: userCoordinate,
-            span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
-        )
-        
-        withAnimation(.easeInOut(duration: 0.6)) {
-            cameraPosition = .region(userRegion)
-        }
-        
-        UIUtils.hapticFeedback(.light)
-    }
-    
-    private func requestLocationWithFeedback() {
-        // Cancel any existing task
-        locationLoadingTask?.cancel()
-        
-        isLocationLoading = true
-        
-        switch locationManager.authorizationStatus {
-        case .notDetermined:
-            locationManager.requestLocationAuthorization {
-                DispatchQueue.main.async {
-                    self.isLocationLoading = false
-                }
-            }
-            
-        case .restricted, .denied:
-            isLocationLoading = false
-            promptForLocationPermission()
-            
-        case .authorizedWhenInUse, .authorizedAlways:
-            if !locationManager.isRequestingLocationUpdates {
-                locationManager.startUpdatingUserLocation()
-            }
-            
-            // Auto-dismiss loading after 5 seconds
-            locationLoadingTask = Task {
-                do {
-                    try await Task.sleep(nanoseconds: 5_000_000_000)
-                    guard !Task.isCancelled else { return }
-                    
-                    await MainActor.run {
-                        isLocationLoading = false
-                    }
-                } catch {
-                    // Task was cancelled
-                }
-            }
-            
-        @unknown default:
-            isLocationLoading = false
-            logger.error("Unknown location authorization status")
-        }
-    }
-    
-    // MARK: - Filter Methods
-    private func toggleCategoryFilter(_ category: SpotCategory) {
-        withAnimation(.easeInOut(duration: 0.3)) {
-            if selectedCategoryFilters.contains(category) {
-                selectedCategoryFilters.remove(category)
-            } else {
-                selectedCategoryFilters.insert(category)
-            }
-        }
-        UIUtils.hapticFeedback(.light)
-    }
-    
-    // MARK: - Geofence Validation
-    private func validateGeofenceStatus() async {
-        guard globalGeofencingEnabled else { return }
-        
-        // Cancel any existing validation
-        geofenceValidationTask?.cancel()
-        
-        // Rate limit geofence validation
-        let now = Date()
-        guard now.timeIntervalSince(lastGeofenceSync) > 5.0 else {
-            logger.debug("Geofence validation rate limited")
-            return
-        }
-        
-        geofenceValidationTask = Task {
-            guard !Task.isCancelled else { return }
-            
-            await MainActor.run {
-                lastGeofenceSync = now
-                
-                let spotsWithNotifications = spotsViewModel.spots.filter { $0.wantsNearbyNotification }
-                let activeGeofenceIds = locationManager.activeGeofenceIDs
-                let expectedIds = Set(spotsWithNotifications.compactMap { $0.id })
-                
-                if activeGeofenceIds != expectedIds {
-                    logger.info("Geofence sync needed: Active(\(activeGeofenceIds.count)) vs Expected(\(expectedIds.count))")
-                    
-                    locationManager.synchronizeGeofences(
-                        forSpots: spotsViewModel.spots,
-                        globallyEnabled: globalGeofencingEnabled
-                    )
-                }
-            }
-        }
-    }
-    
-    // MARK: - Alert Methods
-    private func geofenceAlert(_ alertDetails: LocationManager.GeofenceAlertInfo) -> Alert {
-        Alert(
-            title: Text(alertDetails.title),
-            message: Text(alertDetails.body),
-            primaryButton: .default(Text("View Spot")) {
-                if let spotId = findSpotIdFromAlert(alertDetails) {
-                    Task {
-                        await navigateToSpot(spotId: spotId)
-                    }
-                }
-            },
-            secondaryButton: .cancel()
-        )
+        print("MapView: Navigated to spot '\(spot.name)'")
     }
     
     private func findSpotIdFromAlert(_ alertDetails: LocationManager.GeofenceAlertInfo) -> String? {
+        let alertBody = alertDetails.body
         return spotsViewModel.spots.first { spot in
-            alertDetails.body.contains(spot.name) || alertDetails.spotId == spot.id
+            alertBody.contains(spot.name)
         }?.id
     }
     
-    private func promptForLocationPermission() {
-        alertConfig = AlertConfig(
-            title: "Location Access Required",
-            message: "To show your location on the map and enable proximity alerts, please grant location access in Settings.",
-            primaryButton: "Settings",
-            secondaryButton: "Cancel",
-            actionType: .openSettings
-        )
+    // MARK: - Camera Logic
+    private func setInitialCamera(to coordinate: CLLocationCoordinate2D) {
+        let userRegion = MKCoordinateRegion(center: coordinate, span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1))
+        withAnimation { cameraPosition = .region(userRegion) }
+        viewingRegion = userRegion
+        initialCameraHasBeenSet = true
     }
-    
-    private func showError(_ title: String, message: String) {
-        alertConfig = AlertConfig(
-            title: title,
-            message: message
-        )
-    }
-    
-    private func createAlert(from config: AlertConfig) -> Alert {
-        let primaryButton: Alert.Button
-        if let primary = config.primaryAction {
-            primaryButton = .default(Text(primary.title), action: primary.action)
-        } else {
-            primaryButton = .default(Text("OK"))
+
+    private func updateCameraForNavigation(userLocation: CLLocation) {
+        withAnimation(.linear(duration: 0.5)) {
+            cameraPosition = .userLocation(
+                followsHeading: true,
+                fallback: .region(MKCoordinateRegion(center: userLocation.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005)))
+            )
         }
-
-        let secondaryButton: Alert.Button
-        if let secondary = config.secondaryAction {
-            secondaryButton = .cancel(Text(secondary.title), action: secondary.action)
-        } else {
-            secondaryButton = .cancel()
-        }
-
-        return Alert(title: Text(config.title), message: Text(config.message), primaryButton: primaryButton, secondaryButton: secondaryButton)
     }
+    private func fallbackInitialCameraIfNeeded() async {
+        try? await Task.sleep(for: .seconds(1.5))
 
-    private func handleAlertAction(_ actionType: AlertConfig.ActionType?) {
-        guard let actionType = actionType else { return }
-        
-        switch actionType {
-        case .openSettings:
-            UIUtils.openAppSettings()
-        case .navigateToSpot(let spotId):
-            Task {
-                await navigateToSpot(spotId: spotId)
+        if !initialCameraHasBeenSet {
+            if let userCoordinate = locationManager.userLocation?.coordinate {
+                print("MapView: Fallback - User location became available, setting camera.")
+                let userRegion = MKCoordinateRegion(center: userCoordinate, span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1))
+                withAnimation { cameraPosition = .region(userRegion) }
+                viewingRegion = userRegion
+                initialCameraHasBeenSet = true
+            } else if let firstSpot = spotsViewModel.spots.first {
+                print("MapView: Fallback - No user location, centering on first spot.")
+                let firstSpotRegion = MKCoordinateRegion(center: firstSpot.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1))
+                withAnimation { cameraPosition = .region(firstSpotRegion) }
+                viewingRegion = firstSpotRegion
+            } else {
+                print("MapView: Fallback - No user location and no spots, using default region.")
             }
-        case .custom:
-            // Handle any custom actions
-            break
         }
-    }
-    
-    // MARK: - Accessibility Helpers
-    private func spotAccessibilityLabel(for spot: Spot) -> String {
-        var label = "\(spot.name), \(spot.category.displayName)"
-        
-        if spot.wantsNearbyNotification && globalGeofencingEnabled {
-            label += ", has proximity alert"
-        }
-        
-        if let userLocation = locationManager.userLocation {
-            let distance = spot.distance(from: userLocation)
-            let distanceString = DistanceFormatter.shared.formatDistance(distance)
-            label += ", \(distanceString) away"
-        }
-        
-        return label
-    }
-    
-    // MARK: - Cleanup
-    private func cleanupTasks() {
-        mapInteractionTask?.cancel()
-        cameraUpdateTask?.cancel()
-        locationLoadingTask?.cancel()
-        geofenceValidationTask?.cancel()
-        logger.info("MapView tasks cleaned up")
     }
 }
 
 // MARK: - Enhanced Supporting Views
-
 struct SpotAnnotationView: View {
     let spot: Spot
     let isSelected: Bool
-    let hasGeofence: Bool
     
     var body: some View {
         ZStack {
-            // Main annotation circle
             Circle()
                 .fill(backgroundColor)
                 .frame(width: annotationSize, height: annotationSize)
                 .overlay(
                     Circle()
-                        .stroke(.white, lineWidth: strokeWidth)
+                        .stroke(.white, lineWidth: isSelected ? 3 : 2)
                 )
-                .shadow(color: .black.opacity(0.3), radius: shadowRadius, x: 0, y: 2)
+                .shadow(color: .black.opacity(0.3), radius: 3, x: 0, y: 2)
             
-            // Category icon
             Image(systemName: spot.category.systemImageName)
                 .font(.system(size: iconSize, weight: .semibold))
                 .foregroundColor(.white)
-            
-            // Geofence indicator
-            if hasGeofence && !isSelected {
-                Circle()
-                    .stroke(Color.orange, lineWidth: 2)
-                    .frame(width: annotationSize + 8, height: annotationSize + 8)
-                    .opacity(0.8)
-            }
         }
         .scaleEffect(isSelected ? 1.2 : 1.0)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isSelected)
-        .accessibilityElement(children: .ignore)
-        .accessibilityAddTraits(.isButton)
     }
     
     private var backgroundColor: Color {
-        if isSelected {
-            return .blue
-        }
-        
-        switch spot.category {
-        case .food: return .orange
-        case .nature: return .green
-        case .shopping: return .purple
-        case .sights: return .blue
-        case .activities: return .red
-        case .other: return .gray
-        }
+        isSelected ? .blue : colorFromString(spot.category.associatedColor)
     }
     
     private var annotationSize: CGFloat {
-        isSelected ? 44 : 36
+        isSelected ? 40 : 32
     }
     
     private var iconSize: CGFloat {
-        isSelected ? 22 : 18
-    }
-    
-    private var strokeWidth: CGFloat {
-        isSelected ? 3 : 2
-    }
-    
-    private var shadowRadius: CGFloat {
-        isSelected ? 4 : 3
+        isSelected ? 20 : 16
     }
     
     private func colorFromString(_ colorName: String) -> Color {
-        switch colorName.lowercased() {
+        switch colorName {
         case "orange": return .orange
         case "green": return .green
         case "purple": return .purple
@@ -869,320 +503,200 @@ struct SpotAnnotationView: View {
     }
 }
 
-// MARK: - Geofence Status View
-struct GeofenceStatusView: View {
-    let activeGeofencesCount: Int
-    let authorizationStatus: CLAuthorizationStatus
+private struct RouteInfoCard: View {
+    var message: String? = nil
+    var time: TimeInterval? = nil
+    var distance: CLLocationDistance? = nil
+    var isError: Bool = false
+    var onClear: (() -> Void)? = nil
     
+    private var travelTime: String? {
+        guard let time = time else { return nil }
+        let formatter = DateComponentsFormatter()
+        formatter.unitsStyle = .abbreviated
+        formatter.allowedUnits = [.hour, .minute]
+        return formatter.string(from: time)
+    }
+    
+    private var travelDistance: String? {
+        guard let distance = distance else { return nil }
+        let formatter = LengthFormatter()
+        formatter.numberFormatter.maximumFractionDigits = 1
+        return formatter.string(fromMeters: distance)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: "location.circle.fill")
-                    .foregroundColor(.blue)
-                    .font(.caption)
-                
-                Text("\(activeGeofencesCount) proximity alert\(activeGeofencesCount == 1 ? "" : "s")")
-                    .font(.caption)
-                    .fontWeight(.medium)
+        HStack {
+            VStack(alignment: .leading) {
+                if let time = travelTime, let distance = travelDistance {
+                    Text(time).font(.title3).fontWeight(.bold)
+                    Text(distance).font(.caption).foregroundStyle(.secondary)
+                } else if let message = message {
+                    Text(message)
+                        .font(.headline)
+                        .foregroundStyle(isError ? .red : .primary)
+                        .lineLimit(2)
+                }
             }
-            
-            if authorizationStatus != .authorizedAlways {
-                HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                        .font(.caption2)
-                    
-                    Text("Need Always permission")
-                        .font(.caption2)
-                        .foregroundColor(.orange)
+            Spacer()
+            if let onClear = onClear {
+                Button(action: onClear) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.gray, Color.gray.opacity(0.2))
                 }
             }
         }
-        .padding(8)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .shadow(UIUtils.lightShadow)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Proximity alerts status: \(activeGeofencesCount) active. \(authorizationStatus != .authorizedAlways ? "Always permission needed." : "")")
+        .padding()
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(radius: 5)
+        .padding()
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .animation(.spring(), value: message)
+        .animation(.spring(), value: time)
     }
 }
 
-// MARK: - Location Permission Warning View
-struct LocationPermissionWarningView: View {
-    let action: () -> Void
-    
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "location.slash")
-                .foregroundColor(.red)
-                .font(.caption)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Location Access Denied")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-                
-                Text("Tap to enable in Settings")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-        }
-        .padding(8)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.red.opacity(0.3), lineWidth: 1)
-        )
-        .onTapGesture {
-            action()
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Location access denied. Tap to enable in Settings.")
-        .accessibilityAddTraits(.isButton)
-    }
-}
-
-// MARK: - Enhanced Zoom Controls
-struct MapZoomControls: View {
+private struct MapZoomControls: View {
     @Binding var currentRegion: MKCoordinateRegion?
     @Binding var cameraPosition: MapCameraPosition
     @EnvironmentObject private var locationManager: LocationManager
-    
-    // MARK: - Constants
-    private let buttonSize: CGFloat = 44
-    private let iconSize: CGFloat = 20
-    private let zoomFactor = 0.5
-    private let maxZoomOut = 2.0
-    private let minDelta = 0.0001
-    private let maxDelta = 180.0
-    
+
     var body: some View {
-        VStack(spacing: 8) {
-            // Location center button
+        VStack(spacing: 12) {
             Button {
                 recenterOnUser()
             } label: {
-                Image(systemName: locationIcon)
-                    .font(.system(size: iconSize))
-                    .foregroundStyle(locationColor)
-                    .frame(width: buttonSize, height: buttonSize)
+                Image(systemName: locationManager.userLocation != nil ? "location.fill" : "location.slash")
+                    .mapControlButtonLook()
+                    .foregroundStyle(locationManager.userLocation != nil ? Color.blue : Color.secondary)
             }
-            .accessibilityLabel("Center on current location")
-            .accessibilityHint(locationAccessibilityHint)
-            .disabled(!canRecenter)
 
-            Divider()
-                .frame(height: 1)
-                .background(.secondary.opacity(0.3))
-
-            // Zoom in button
-            Button {
-                zoom(by: zoomFactor)
-            } label: {
+            Button { zoom(by: 0.5) } label: {
                 Image(systemName: "plus.magnifyingglass")
-                    .font(.system(size: iconSize))
-                    .foregroundStyle(.secondary)
-                    .frame(width: buttonSize, height: buttonSize)
+                    .mapControlButtonLook()
             }
-            .accessibilityLabel("Zoom in")
-            .disabled(!canZoomIn)
-            
-            // Zoom out button
-            Button {
-                zoom(by: maxZoomOut)
-            } label: {
+            Button { zoom(by: 2.0) } label: {
                 Image(systemName: "minus.magnifyingglass")
-                    .font(.system(size: iconSize))
-                    .foregroundStyle(.secondary)
-                    .frame(width: buttonSize, height: buttonSize)
+                    .mapControlButtonLook()
             }
-            .accessibilityLabel("Zoom out")
-            .disabled(!canZoomOut)
         }
-        .padding(12)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .shadow(UIUtils.cardShadow)
-    }
-    
-    // MARK: - Computed Properties
-    private var locationIcon: String {
-        switch locationManager.authorizationStatus {
-        case .authorizedWhenInUse, .authorizedAlways:
-            return locationManager.userLocation != nil ? "location.fill" : "location"
-        case .denied, .restricted:
-            return "location.slash"
-        case .notDetermined:
-            return "location"
-        @unknown default:
-            return "location"
-        }
-    }
-    
-    private var locationColor: Color {
-        switch locationManager.authorizationStatus {
-        case .authorizedWhenInUse, .authorizedAlways:
-            return locationManager.userLocation != nil ? .blue : .secondary
-        case .denied, .restricted:
-            return .red
-        case .notDetermined:
-            return .orange
-        @unknown default:
-            return .secondary
-        }
-    }
-    
-    private var locationAccessibilityHint: String {
-        switch locationManager.authorizationStatus {
-        case .authorizedWhenInUse, .authorizedAlways:
-            return locationManager.userLocation != nil ? "Centers map on your current location" : "Requests your current location"
-        case .denied, .restricted:
-            return "Location access denied. Opens Settings to enable."
-        case .notDetermined:
-            return "Requests location permission"
-        @unknown default:
-            return "Location status unknown"
-        }
-    }
-    
-    private var canRecenter: Bool {
-        locationManager.authorizationStatus != .restricted
-    }
-    
-    private var canZoomIn: Bool {
-        guard let region = currentRegion else { return true }
-        return region.span.latitudeDelta > minDelta && region.span.longitudeDelta > minDelta
-    }
-    
-    private var canZoomOut: Bool {
-        guard let region = currentRegion else { return true }
-        return region.span.latitudeDelta < maxDelta && region.span.longitudeDelta < maxDelta
+        .padding(10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .shadow(radius: 3)
     }
 
-    // MARK: - Methods
     private func zoom(by factor: Double) {
+        // ✅ This now works because currentRegion is always kept up-to-date.
         guard var region = currentRegion else { return }
         
-        let newLatDelta = max(minDelta, min(region.span.latitudeDelta * factor, maxDelta))
-        let newLonDelta = max(minDelta, min(region.span.longitudeDelta * factor, maxDelta))
-        
-        // Only update if there's a meaningful change
-        guard abs(newLatDelta - region.span.latitudeDelta) > minDelta * 10 ||
-              abs(newLonDelta - region.span.longitudeDelta) > minDelta * 10 else {
-            return
-        }
-        
-        region.span.latitudeDelta = newLatDelta
-        region.span.longitudeDelta = newLonDelta
+        region.span.latitudeDelta *= factor
+        region.span.longitudeDelta *= factor
         
         withAnimation(.easeInOut(duration: 0.3)) {
             cameraPosition = .region(region)
         }
-        
-        UIUtils.hapticFeedback(.light)
     }
     
     private func recenterOnUser() {
-        UIUtils.hapticFeedback(.light)
-        
-        switch locationManager.authorizationStatus {
-        case .authorizedWhenInUse, .authorizedAlways:
-            if let userCoordinate = locationManager.userLocation?.coordinate {
-                let userRegion = MKCoordinateRegion(
-                    center: userCoordinate,
-                    span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
-                )
-                
-                withAnimation(.easeInOut(duration: 0.6)) {
-                    cameraPosition = .region(userRegion)
-                }
-            } else {
-                // Request location update
-                if !locationManager.isRequestingLocationUpdates {
-                    locationManager.startUpdatingUserLocation()
-                }
+        if let userCoordinate = locationManager.userLocation?.coordinate {
+            let newRegion = MKCoordinateRegion(
+                center: userCoordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+            )
+            
+            // ✅ This is the key fix for the recenter bug.
+            // We update BOTH the camera and the local region state simultaneously.
+            withAnimation(.easeInOut(duration: 0.5)) {
+                currentRegion = newRegion
+                cameraPosition = .region(newRegion)
             }
-            
-        case .denied, .restricted:
-            // Open Settings
-            UIUtils.openAppSettings()
-            
-        case .notDetermined:
-            // Request permission
-            locationManager.requestLocationAuthorization(aimForAlways: false)
-            
-        @unknown default:
-            break
+        } else {
+            // Fallback logic for permissions remains the same
+            locationManager.requestLocationAuthorization()
+            if locationManager.authorizationStatus == .denied || locationManager.authorizationStatus == .restricted {
+                locationManager.showPermissionAlert = true
+            }
         }
     }
 }
 
-
-
-// MARK: - Preview
-#Preview("MapView - Default") {
-    let mockSpotsVM = SpotViewModel()
-    let mockLocationManager = LocationManager()
-    let mockAuthVM = AuthViewModel()
-    let mockCollectionVM = CollectionViewModel()
-    
-    // Add mock data
-    mockSpotsVM.spots = [
-        Spot(
-            userId: "user1",
-            name: "Cafe Central",
-            address: "123 Main St, San Francisco, CA",
-            latitude: 37.7749,
-            longitude: -122.4194,
-            category: .food,
-            wantsNearbyNotification: true,
-            notificationRadiusMeters: 200
-        ),
-        Spot(
-            userId: "user1",
-            name: "Golden Gate Park",
-            address: "Golden Gate Park, San Francisco, CA",
-            latitude: 37.7694,
-            longitude: -122.4862,
-            category: .nature,
-            wantsNearbyNotification: false
-        ),
-        Spot(
-            userId: "user1",
-            name: "Union Square",
-            address: "Union Square, San Francisco, CA",
-            latitude: 37.7880,
-            longitude: -122.4074,
-            category: .shopping,
-            wantsNearbyNotification: true,
-            notificationRadiusMeters: 150
-        )
-    ]
-
-    return NavigationStack {
-        MapView()
-            .environmentObject(mockSpotsVM)
-            .environmentObject(mockLocationManager)
-            .environmentObject(mockAuthVM)
-            .environmentObject(mockCollectionVM)
+private struct MapControlButtonLook: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(.title2)
+            .padding(10)
+            .frame(width: 44, height: 44)
+            .foregroundStyle(Color.secondary)
     }
 }
 
-#Preview("MapView - Empty State") {
-    let mockSpotsVM = SpotViewModel()
-    let mockLocationManager = LocationManager()
-    let mockAuthVM = AuthViewModel()
-    let mockCollectionVM = CollectionViewModel()
+private extension View {
+    func mapControlButtonLook() -> some View {
+        self.modifier(MapControlButtonLook())
+    }
+}
 
-    return NavigationStack {
-        MapView()
-            .environmentObject(mockSpotsVM)
-            .environmentObject(mockLocationManager)
-            .environmentObject(mockAuthVM)
-            .environmentObject(mockCollectionVM)
+extension MKMapRect {
+    func paddedBy(factor: Double) -> MKMapRect {
+        let a = self.size.width * (factor - 1)
+        let b = self.size.height * (factor - 1)
+        return self.insetBy(dx: -a / 2, dy: -b / 2)
+    }
+}
+
+private struct TurnByTurnInstructionView: View {
+    @EnvironmentObject var navigationViewModel: NavigationViewModel
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            // Next step instruction
+            HStack {
+                // You could add an icon for the maneuver here (e.g., turn left arrow)
+                Text(navigationViewModel.nextStepInstruction)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true) // Allow text to wrap
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            
+            // Overall route progress
+            HStack {
+                Text(navigationViewModel.remainingTravelTime)
+                Text("•")
+                Text(navigationViewModel.remainingDistance)
+                Spacer()
+                Text(navigationViewModel.arrivalTime)
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        }
+        .padding()
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal)
+    }
+}
+
+private struct EndNavigationButton: View {
+    @EnvironmentObject var navigationViewModel: NavigationViewModel
+    
+    var body: some View {
+        Button(action: {
+            navigationViewModel.stopNavigation()
+        }) {
+            Text("End")
+                .font(.headline)
+                .fontWeight(.bold)
+                .foregroundStyle(.white)
+                .padding(.vertical, 10)
+                .padding(.horizontal, 20)
+                .background(Color.red)
+                .clipShape(Capsule())
+                .shadow(radius: 5)
+        }
     }
 }
