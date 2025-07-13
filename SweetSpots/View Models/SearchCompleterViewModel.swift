@@ -14,6 +14,7 @@ class SearchCompleterViewModel: NSObject, ObservableObject {
     enum SearchState: Equatable {
         case idle
         case searching
+        case loadingDetails // <-- Add this new state
         case results([MKLocalSearchCompletion])
         case noResults
         case selected
@@ -39,10 +40,8 @@ class SearchCompleterViewModel: NSObject, ObservableObject {
         completer.delegate = self
         completer.resultTypes = [.address, .pointOfInterest]
         
-        // MARK: - CHANGE 2: Make the pipeline smarter
-        /// We now handle all state changes inside the debounced pipeline.
         searchSubject
-            .debounce(for: .milliseconds(350), scheduler: RunLoop.main) // Slightly longer debounce can feel better
+            .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
             .removeDuplicates()
             .sink { [weak self] query in
                 guard let self = self else { return }
@@ -51,11 +50,11 @@ class SearchCompleterViewModel: NSObject, ObservableObject {
                 if query.isEmpty {
                     self.searchState = .idle
                     self.completer.cancel()
+                    self.lastSearchQuery = ""
                     return
                 }
                 
-                // *** THIS IS THE KEY ***
-                // Set the state to .searching *after* the user has paused typing.
+                // Set searching state right before performing search
                 self.searchState = .searching
                 self.performSearch(query)
             }
@@ -64,9 +63,6 @@ class SearchCompleterViewModel: NSObject, ObservableObject {
     
     private func performSearch(_ query: String) {
         lastSearchQuery = query
-        
-        // This logic can be slightly simplified now
-        // if query.isEmpty is handled in the pipeline
         
         if let region = searchRegion {
             completer.region = region
@@ -77,6 +73,8 @@ class SearchCompleterViewModel: NSObject, ObservableObject {
     
     func clearSearch() {
         queryFragment = ""
+        searchState = .idle
+        lastSearchQuery = ""
     }
     
     func select(completion: MKLocalSearchCompletion) {
@@ -95,6 +93,7 @@ class SearchCompleterViewModel: NSObject, ObservableObject {
         }
         
         return PlaceDetails(
+            name: mapItem.name ?? completion.title, // 👈 2. Get the name from the map item
             fullAddress: formatAddress(from: mapItem),
             coordinates: mapItem.placemark.coordinate,
             phoneNumber: mapItem.phoneNumber,
@@ -138,8 +137,9 @@ class SearchCompleterViewModel: NSObject, ObservableObject {
 extension SearchCompleterViewModel: MKLocalSearchCompleterDelegate {
     nonisolated func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
         Task { @MainActor in
-            // Only update if this is still the current search
-            guard completer.queryFragment == lastSearchQuery else { return }
+            // Always check if we're still searching for the same query
+            guard completer.queryFragment == lastSearchQuery,
+                  !completer.queryFragment.isEmpty else { return }
             
             if completer.results.isEmpty {
                 searchState = .noResults
@@ -152,7 +152,8 @@ extension SearchCompleterViewModel: MKLocalSearchCompleterDelegate {
     nonisolated func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
         Task { @MainActor in
             // Only update if this is still the current search
-            guard completer.queryFragment == lastSearchQuery else { return }
+            guard completer.queryFragment == lastSearchQuery,
+                  !completer.queryFragment.isEmpty else { return }
             
             if let error = error as? MKError {
                 switch error.code {
@@ -172,6 +173,7 @@ extension SearchCompleterViewModel: MKLocalSearchCompleterDelegate {
 
 // MARK: - Supporting Types
 struct PlaceDetails {
+    let name: String
     let fullAddress: String
     let coordinates: CLLocationCoordinate2D
     let phoneNumber: String?

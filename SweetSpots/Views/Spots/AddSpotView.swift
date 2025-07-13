@@ -8,6 +8,7 @@
 import SwiftUI
 import MapKit
 import FirebaseCore
+import Combine
 
 // MARK: - Step 1: Create the SpotFormState Class
 /// This class holds all the data and state for a single, collapsible spot form.
@@ -21,7 +22,7 @@ class SpotFormState: ObservableObject, Identifiable {
     @Published var spotAddress: String = ""
     @Published var spotCoordinates: CLLocationCoordinate2D?
     @Published var spotSourceURLInput: String = "Manually Added"
-    @Published var selectedCategory: SpotCategory = .other
+    @Published var selectedCategory: SpotCategory? = nil
     @Published var spotPhoneNumber: String = ""
     @Published var spotWebsiteURLInput: String = ""
     @Published var selectedCollectionId: String? = nil
@@ -39,15 +40,21 @@ class SpotFormState: ObservableObject, Identifiable {
     @Published var searchCompleterVM = SearchCompleterViewModel()
     
     private var originalSpot: Spot? // To track changes in edit mode
+    private var cancellables = Set<AnyCancellable>() // 👈 2. Add a place to store the subscription
+
 
     // MARK: - Initializers
     init() {
         // Creates a blank form for "Add New Manual" mode.
+        setupSearchCompleterSubscription() // 👈 4. Call the new setup method
+
     }
 
     init(sourceURL: String, collectionId: String? = nil) {
         self.spotSourceURLInput = sourceURL
         self.selectedCollectionId = collectionId
+        setupSearchCompleterSubscription() // 👈 4. Call the new setup method
+
     }
     
     init(spot: Spot) {
@@ -74,7 +81,19 @@ class SpotFormState: ObservableObject, Identifiable {
             self.customRadiusText = String(Int(validRadius))
             self.showingCustomRadiusTextField = true
         }
+        setupSearchCompleterSubscription() // 👈 4. Call the new setup method
+
     }
+    
+    private func setupSearchCompleterSubscription() {
+            searchCompleterVM.objectWillChange
+                .sink { [weak self] _ in
+                    // When the inner VM is about to change,
+                    // we manually trigger the outer class's change notification.
+                    self?.objectWillChange.send()
+                }
+                .store(in: &cancellables)
+        }
 
     // MARK: - Computed Validation Properties (Moved from AddSpotView)
     var isValidSpotName: Bool { !spotName.trimmedSafe().isEmpty && spotName.trimmedSafe().count <= 100 }
@@ -107,13 +126,13 @@ class SpotFormState: ObservableObject, Identifiable {
     }
 
     var isFormValidAndReadyToSave: Bool {
-        isValidSpotName && isValidAddress && isValidSourceURL && isValidPhoneNumber && isValidWebsiteURL && isValidCustomRadius && hasChanges
+        isValidSpotName && isValidAddress && selectedCategory != nil && isValidSourceURL && isValidPhoneNumber && isValidWebsiteURL && isValidCustomRadius && hasChanges
     }
     
     // MARK: - Model Conversion
     /// Builds a `Spot` model object from the current form state.
     func buildSpotModel(with userId: String) -> Spot? {
-        guard let coords = spotCoordinates else { return nil }
+        guard let coords = spotCoordinates, let category = selectedCategory else { return nil }
         
         let finalSourceURL = (spotSourceURLInput.trimmedSafe() == "Manually Added" || spotSourceURLInput.trimmedSafe().isEmpty) ? nil : spotSourceURLInput.trimmedSafe()
         let finalPhoneNumber = spotPhoneNumber.trimmedSafe().isEmpty ? nil : spotPhoneNumber.trimmedSafe()
@@ -138,7 +157,7 @@ class SpotFormState: ObservableObject, Identifiable {
             latitude: coords.latitude,
             longitude: coords.longitude,
             sourceURL: finalSourceURL,
-            category: selectedCategory,
+            category: category,
             phoneNumber: finalPhoneNumber,
             websiteURL: finalWebsiteURL,
             collectionId: selectedCollectionId,
@@ -194,6 +213,8 @@ struct AddSpotView: View {
     @State private var alertInfo: AddSpotViewAlertInfo? = nil
     @State private var showingNewCollectionSheet: Bool = false
     @State private var activeFormId: UUID? = nil
+    @State private var viewUpdater = UUID()
+
 
 
     // WebView State (Only for .addFromShare mode)
@@ -265,10 +286,10 @@ struct AddSpotView: View {
     private func formContentContainer() -> some View {
         Form {
             // Step 4: Use a ForEach loop to create a SpotFormSectionView for each state object.
-            ForEach($spotForms) { $formState in
+            ForEach(spotForms) { formState in
                 let formId = formState.id // Capture the ID for the closures
                 SpotFormSectionView(
-                    formState: $formState,
+                    formState: formState,
                     index: spotForms.firstIndex(where: { $0.id == formId }) ?? 0,
                     onRemove: { if spotForms.count > 1 { spotForms.removeAll(where: { $0.id == formId }) } },
                     // 👇 Pass the new closures here 👇
@@ -280,6 +301,11 @@ struct AddSpotView: View {
                         // For now, we don't need to, but the hook is here.
                     }
                 )
+                .onReceive(formState.objectWillChange) { _ in
+                    // When any @Published property in formState changes,
+                    // this will trigger, forcing the AddSpotView to refresh.
+                    self.viewUpdater = UUID()
+                }
             }
 
             // Step 5: Add the "Add Another Spot" button, visible only in the correct mode.
@@ -537,7 +563,7 @@ struct AddSpotView: View {
 // MARK: - Step 3: Create the Reusable SpotFormSectionView
 /// This view represents one collapsible section in the list. It binds to a `SpotFormState` object.
 struct SpotFormSectionView: View {
-    @Binding var formState: SpotFormState
+    @ObservedObject var formState: SpotFormState // 👈 Use @ObservedObject here
     let index: Int
     let onRemove: () -> Void
     var onFieldFocused: () -> Void // <-- NEW: Called when a field gets focus
@@ -547,11 +573,6 @@ struct SpotFormSectionView: View {
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
     @FocusState private var focusedField: AddSpotView.FormField?
 
-    
-    // 1. Add local state for the text field. Typing only updates this, making it instant.
-    @State private var localSearchQuery: String = ""
-    // 2. Add a task to handle debouncing, so we don't search on every keystroke.
-    @State private var debounceTask: Task<Void, Never>?
     @State private var pickerSelection: AnyHashable = AnyHashable(NoCollectionAction())
     
     @State private var isShowingAddCollectionAlert = false
@@ -577,7 +598,6 @@ struct SpotFormSectionView: View {
             } else {
                 pickerSelection = AnyHashable(NoCollectionAction())
             }
-            localSearchQuery = formState.searchCompleterVM.queryFragment
         }
         .alert("New Collection", isPresented: $isShowingAddCollectionAlert) {
             TextField("Collection Name", text: $newCollectionName)
@@ -638,10 +658,49 @@ struct SpotFormSectionView: View {
             .focused($focusedField, equals: .url)
             .disabled(formState.spotSourceURLInput.isValidURL) // Disable if it came from share extension
         
-        Picker("Category*", selection: $formState.selectedCategory) {
-            ForEach(SpotCategory.allCases) { category in
-                Label(category.displayName, systemImage: category.systemImageName).tag(category)
+        ZStack {
+            // Our custom view that LOOKS like a form row. This is what the user sees.
+            HStack {
+                if let selectedCategory = formState.selectedCategory {
+                    // --- STATE: A category IS selected ---
+                    Image(systemName: selectedCategory.systemImageName)
+                        .foregroundStyle(Color.themePrimary)
+                        .frame(width: 20)
+
+                    Text(selectedCategory.displayName)
+                        .foregroundStyle(Color.themeTextPrimary)
+
+                } else {
+                    // --- STATE: No category is selected (nil) ---
+                    Text("Pick a Category")
+                        .foregroundStyle(Color.themeTextSecondary) // Use a placeholder color
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
             }
+            .contentShape(Rectangle())
+
+            // The ACTUAL Picker.
+            Picker("Category", selection: $formState.selectedCategory) {
+                // The "prompt" is now the first item in the list, with a nil tag.
+                Text("Pick a Category").tag(SpotCategory?(nil))
+
+                // The rest of the categories
+                ForEach(SpotCategory.allCases) { category in
+                    HStack {
+                        Image(systemName: category.systemImageName)
+                            .padding(.trailing, 4)
+                        Text(category.displayName)
+                    }
+                    .tag(SpotCategory?(category)) // Tag must now be of type SpotCategory?
+                }
+            }
+            .labelsHidden()
+            .opacity(0.015)
         }
         
         // --- Optional Details ---
@@ -669,7 +728,6 @@ struct SpotFormSectionView: View {
     
     @ViewBuilder
     private func locationSearchAndDisplayView() -> some View {
-        // Simplified: No more localSearchQuery, just bind directly
         ZStack(alignment: .trailing) {
             ThemedTextField(
                 title: "Address or Place*",
@@ -679,8 +737,10 @@ struct SpotFormSectionView: View {
             .focused($focusedField, equals: .search)
             .autocorrectionDisabled(true)
             .textInputAutocapitalization(.words)
-            
-            // Clear button
+            // This padding is correct, it makes room for our button.
+            .padding(.trailing, formState.searchCompleterVM.queryFragment.isEmpty ? 0 : 44)
+
+            // Clear button with proper hit area
             if !formState.searchCompleterVM.queryFragment.isEmpty {
                 Button(action: {
                     formState.searchCompleterVM.clearSearch()
@@ -689,15 +749,19 @@ struct SpotFormSectionView: View {
                 }) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.secondary)
-                        .padding(.trailing, 8)
+                        // 👇 FIX 1: Give the button a reliable, large tap target.
+                        // 44x44 is Apple's recommended minimum for touch targets.
+                        .frame(width: 44, height: 44)
+                        // 👇 FIX 2: Tell SwiftUI the entire rectangular frame is tappable.
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .transition(.opacity.animation(.easeInOut(duration: 0.2)))
+                .zIndex(1)
             }
         }
         
-        // Search results with improved animations
+        // Search results view remains the same
         searchResultsView()
     }
     
@@ -729,11 +793,53 @@ struct SpotFormSectionView: View {
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
+            
+            
+            case .loadingDetails:
+                HStack {
+                    ProgressView()
+                        .padding(.trailing, 4)
+                    Text("Fetching details...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                
                 
             case .results(let completions):
                 SearchResultsList(results: completions) { completion in
-                    processSearchSelection(completion)
-                    focusedField = nil
+                    focusedField = nil // Dismiss keyboard
+
+                    // 1. Set the state to loadingDetails to show a spinner
+                    formState.searchCompleterVM.searchState = .loadingDetails
+
+                    Task {
+                        do {
+                            // 2. Try to fetch the details
+                            let details = try await formState.searchCompleterVM.getPlaceDetails(for: completion)
+                            
+                            // 3. On success, update the form and set state to .selected
+                            await MainActor.run {
+                                let potentialName = details.name.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                                // 2. Only assign it if the form's name is empty AND the potential name isn't.
+                                if formState.spotName.isEmpty && !potentialName.isEmpty {
+                                    formState.spotName = potentialName
+                                }
+                                formState.spotAddress = details.fullAddress
+                                formState.spotCoordinates = details.coordinates
+                                if formState.spotPhoneNumber.isEmpty { formState.spotPhoneNumber = details.phoneNumber ?? "" }
+                                if formState.spotWebsiteURLInput.isEmpty { formState.spotWebsiteURLInput = details.websiteURL?.absoluteString ?? "" }
+                                
+                                formState.searchCompleterVM.searchState = .selected
+                            }
+                        } catch {
+                            // 4. On failure, update the state to show an error message to the user
+                            formState.searchCompleterVM.searchState = .error("Failed to load location details. Please try again.")
+                        }
+                    }
                 }
                 
             case .noResults:
