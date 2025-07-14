@@ -172,7 +172,7 @@ struct SpotDetailView: View {
             return CLLocation(latitude: spot.latitude, longitude: spot.longitude).distance(from: CLLocation(latitude: otherSpot.latitude, longitude: otherSpot.longitude)) <= 1000
         }
         
-        return Map(initialPosition: .region(previewRegion), interactionModes: []) {
+        return Map(initialPosition: .region(previewRegion), interactionModes: [.pan, .zoom]) {
             Annotation(spot.name, coordinate: spot.coordinate) { SpotAnnotationView(spot: spot, isSelected: true).zIndex(1) }
                 .tag(spot.id ?? "")
             ForEach(nearbySpots) { nearbySpot in

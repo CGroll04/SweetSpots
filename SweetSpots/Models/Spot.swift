@@ -185,7 +185,7 @@ enum SpotCategory: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .food: return "fork.knife"
         case .nature: return "leaf.fill"
-        case .shopping: return "tag.fill"
+        case .shopping: return "bag.fill"
         case .sights: return "camera.fill"
         case .activities: return "figure.walk"
         case .other: return "mappin.and.ellipse"

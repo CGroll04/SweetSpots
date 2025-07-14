@@ -17,6 +17,7 @@ struct MapView: View {
     @EnvironmentObject private var navigationViewModel: NavigationViewModel
 
     // MARK: - State Variables
+    @State private var showingAddSheet: Bool = false // 1. ADD THIS STATE
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var viewingRegion: MKCoordinateRegion? = nil
     
@@ -130,8 +131,23 @@ struct MapView: View {
                     ToolbarItemGroup(placement: .navigationBarTrailing) {
                         geofenceToggleButton()
                         mapCategoryFilterMenu()
+                        
+                        Button {
+                            showingAddSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .foregroundStyle(Color.themePrimary)
+                        }
                     }
                 }
+            }
+            .sheet(isPresented: $showingAddSheet) {
+                AddSpotView(isPresented: $showingAddSheet, spotToEdit: nil, prefilledURL: nil)
+                    .environmentObject(spotsViewModel)
+                    .environmentObject(authViewModel)
+                    .environmentObject(locationManager)
+                    .environmentObject(collectionViewModel)
+                    .environmentObject(navigationViewModel)
             }
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarHidden(navigationViewModel.isNavigating)
@@ -268,7 +284,10 @@ struct MapView: View {
                 Image(systemName: "location.circle.fill")
                     .foregroundColor(.blue)
                     .font(.caption)
-                Text("\(spotsWithGeofences.count) active alerts")
+                
+                // THE FIX (Grammar & Casing):
+                // This now correctly shows "1 Active Alert" or "X Active Alerts"
+                Text("\(spotsWithGeofences.count) Active Alert\(spotsWithGeofences.count == 1 ? "" : "s")")
                     .font(.caption)
                     .fontWeight(.medium)
             }
@@ -278,7 +297,9 @@ struct MapView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
                         .font(.caption2)
-                    Text("Need Always permission")
+                    
+                    // THE FIX (Casing):
+                    Text("Need Always Permission")
                         .font(.caption2)
                         .foregroundColor(.orange)
                 }

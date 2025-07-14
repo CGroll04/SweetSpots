@@ -7,6 +7,9 @@
 
 import SwiftUI
 
+typealias DeletionMode = CollectionViewModel.DeletionMode
+
+
 fileprivate struct EditCollectionAlertInfo: Identifiable {
     let id = UUID()
     let title: String
@@ -15,6 +18,7 @@ fileprivate struct EditCollectionAlertInfo: Identifiable {
 
 struct EditCollectionView: View {
     @EnvironmentObject var collectionViewModel: CollectionViewModel
+    @EnvironmentObject var spotViewModel: SpotViewModel // Ensure SpotViewModel is in the environment
     @Environment(\.dismiss) var dismiss
     
     // The collection being edited. Passed in and used to initialize @State.
@@ -86,26 +90,57 @@ struct EditCollectionView: View {
             .alert(item: $alertInfo) { info in
                 Alert(title: Text(info.title), message: Text(info.message), dismissButton: .default(Text("OK")))
             }
-            .alert("Delete '\(collection.name)'?", isPresented: $showDeleteConfirmation) { // More specific title
-                Button("Delete", role: .destructive) { deleteCollection() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Spots in this collection will become uncategorized. This action cannot be undone.")
-            }
+            .confirmationDialog(
+                            "Delete '\(collection.name)'?",
+                            isPresented: $showDeleteConfirmation,
+                            titleVisibility: .visible
+                        ) {
+                            // Option 1: Delete everything (destructive)
+                            Button("Delete Collection & All Spots", role: .destructive) {
+                                deleteCollection(mode: .collectionAndSpots)
+                            }
+                            
+                            // Option 2: Delete collection only
+                            Button("Delete Collection Only (Remove Spots from collection)") {
+                                deleteCollection(mode: .collectionOnly)
+                            }
+                            
+                            // Standard cancel button
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("This action cannot be undone.")
+                        }
             .overlay {
                  if isProcessing { ProcessingOverlayView(message: "Processing...") }
             }
         }
     }
+    
+    private func deleteCollection(mode: DeletionMode) {
+            isProcessing = true
+            collectionViewModel.deleteCollection(
+                self.collection,
+                mode: mode,
+                updateSpotsViewModel: spotViewModel // Pass the SpotViewModel
+            ) { result in
+                isProcessing = false
+                switch result {
+                case .success:
+                    dismiss()
+                case .failure(let error):
+                    alertInfo = EditCollectionAlertInfo(title: "Delete Failed", message: error.localizedDescription)
+                }
+            }
+        }
 
     private func hasChanges() -> Bool {
-        let trimmedEditableName = editableName.trimmedSafe()
-        let trimmedEditableDescription = editableDescription.trimmedSafe()
+        let trimmedName = editableName.trimmedSafe()
+        let trimmedDescription = editableDescription.trimmedSafe()
+
+        let nameChanged = trimmedName != collection.name
         
-        // Compare current editable state with the original collection's state
-        let nameChanged = trimmedEditableName != collection.name
-        let descriptionChanged = (trimmedEditableDescription.isEmpty ? nil : trimmedEditableDescription) != collection.descriptionText
-        
+        let descriptionChanged = trimmedDescription != (collection.descriptionText ?? "")
+
         return nameChanged || descriptionChanged
     }
 
@@ -140,20 +175,6 @@ struct EditCollectionView: View {
                 dismiss()
             case .failure(let error):
                 alertInfo = EditCollectionAlertInfo(title: "Update Failed", message: error.localizedDescription)
-            }
-        }
-    }
-    
-    private func deleteCollection() {
-        isProcessing = true
-        // Option A: Spot orphaning is handled by UI filtering based on missing collection.
-        collectionViewModel.deleteCollection(self.collection, updateSpotsViewModel: nil) { result in
-            isProcessing = false
-            switch result {
-            case .success:
-                dismiss()
-            case .failure(let error):
-                alertInfo = EditCollectionAlertInfo(title: "Delete Failed", message: error.localizedDescription)
             }
         }
     }

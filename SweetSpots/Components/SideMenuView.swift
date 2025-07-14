@@ -11,7 +11,7 @@ import SwiftUI
 struct SideMenuView: View {
     // Bindings to control the parent view's state
     @Binding var selectedCollectionFilterId: String?
-    @Binding var showOnlyUncategorized: Bool
+    @Binding var showOnlyUncollected: Bool
     
     // Action to dismiss the menu
     let onDismiss: () -> Void
@@ -74,25 +74,25 @@ struct SideMenuView: View {
             FilterRow(
                 title: "All Spots",
                 icon: "square.stack.3d.up", // A more descriptive icon
-                isSelected: selectedCollectionFilterId == nil && !showOnlyUncategorized,
+                isSelected: selectedCollectionFilterId == nil && !showOnlyUncollected,
                 spotCount: spotsViewModel.spots.count,
                 onEdit: nil // No edit action for this row
             ) {
                 selectedCollectionFilterId = nil
-                showOnlyUncategorized = false
+                showOnlyUncollected = false
                 onDismiss()
             }
             
-            // Uncategorized option
+            //Uncollected option
             FilterRow(
-                title: "Uncategorized",
+                title: "Uncollected",
                 icon: "tray",
-                isSelected: showOnlyUncategorized,
+                isSelected: showOnlyUncollected,
                 spotCount: spotsViewModel.spots.filter { $0.collectionId == nil }.count,
                 onEdit: nil // No edit action for this row
             ) {
                 selectedCollectionFilterId = nil
-                showOnlyUncategorized = true
+                showOnlyUncollected = true
                 onDismiss()
             }
         }
@@ -119,7 +119,7 @@ struct SideMenuView: View {
                         }
                     ) {
                         selectedCollectionFilterId = collection.id
-                        showOnlyUncategorized = false
+                        showOnlyUncollected = false
                         onDismiss()
                     }
                 }
@@ -160,7 +160,7 @@ struct SideMenuView: View {
                 // If the await call succeeds, this code will run.
                 // On success, select the new collection filter and dismiss the side menu.
                 self.selectedCollectionFilterId = newId
-                self.showOnlyUncategorized = false
+                self.showOnlyUncollected = false
                 self.onDismiss()
                 
             } catch {

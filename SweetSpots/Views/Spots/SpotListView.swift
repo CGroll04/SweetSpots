@@ -18,14 +18,17 @@ struct SpotListView: View {
 
     // MARK: - UI State
     @State private var searchText = ""
+    @State private var showingAddSheet: Bool = false // Add this line
     @State private var spotToEdit: Spot? = nil
     @State private var collectionToEdit: SpotCollection? = nil
+    @State private var spotToDelete: Spot? = nil
+    @State private var showingDeleteConfirmation = false
 
     // MARK: - Filtering & Sorting State
     @State private var selectedCategoryFilters: Set<SpotCategory> = []
     @State private var currentSortOrder: SortOrder = .distanceAscending
     @State private var selectedCollectionFilterId: String? = nil
-    @State private var showOnlyUncategorized: Bool = false
+    @State private var showOnlyUncollected: Bool = false
     
     // State to control side menu presentation
     @State private var showingSideMenu: Bool = false
@@ -55,7 +58,7 @@ struct SpotListView: View {
     private var displayedSpots: [Spot] {
         var workingSpots = spotsViewModel.spots
 
-        if showOnlyUncategorized {
+        if showOnlyUncollected {
             workingSpots = workingSpots.filter { $0.collectionId == nil }
         } else if let collectionId = selectedCollectionFilterId {
             workingSpots = workingSpots.filter { $0.collectionId == collectionId }
@@ -132,6 +135,14 @@ struct SpotListView: View {
                         .environmentObject(locationManager)
                         .environmentObject(navigationViewModel)
                 }
+                .sheet(isPresented: $showingAddSheet) {
+                   AddSpotView(isPresented: $showingAddSheet, spotToEdit: nil, prefilledURL: nil)
+                       .environmentObject(spotsViewModel)
+                       .environmentObject(authViewModel)
+                       .environmentObject(locationManager)
+                       .environmentObject(collectionViewModel)
+                       .environmentObject(navigationViewModel)
+               }
                 .sheet(isPresented: isShowingEditSheet, onDismiss: {
                     print("SpotListView: Edit Spot sheet dismissed. Real-time listener will handle updates.")
                 }) {
@@ -148,7 +159,7 @@ struct SpotListView: View {
                 .sheet(isPresented: $showingSideMenu) {
                     SideMenuView(
                         selectedCollectionFilterId: $selectedCollectionFilterId,
-                        showOnlyUncategorized: $showOnlyUncategorized,
+                        showOnlyUncollected: $showOnlyUncollected,
                         onDismiss: { showingSideMenu = false }
                     )
                     .environmentObject(collectionViewModel)
@@ -160,10 +171,44 @@ struct SpotListView: View {
 
         // Stage 2: Apply lifecycle and onChange modifiers
         let finalContent = navigationConfiguredContent
+            .alert(
+                "Delete SweetSpot",
+                isPresented: $showingDeleteConfirmation,
+                presenting: spotToDelete
+            ) { spot in
+                // Action Buttons
+                Button("Delete", role: .destructive) {
+                    // This is where the actual deletion happens
+                    spotsViewModel.deleteSpot(spot) { result in
+                        if case .failure(let error) = result {
+                            spotsViewModel.errorMessage = "Failed to delete: \(error.localizedDescription)"
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) {
+                    // Dismisses the alert automatically
+                }
+            } message: { spot in
+                // The confirmation message
+                Text("Are you sure you want to permanently delete \"\(spot.name)\"? This action cannot be undone.")
+            }
+        
             .onAppear {
                 // Load geofencing setting from UserDefaults
                 geofencingGloballyEnabled = UserDefaults.standard.object(forKey: "GeofencingGloballyEnabled") as? Bool ?? true
                 initialLoadTasks()
+            }
+            .onChange(of: collectionViewModel.collections) {
+                // If a collection filter is active...
+                if let currentId = selectedCollectionFilterId {
+                    // ...check if that collection still exists in the updated list.
+                    let collectionExists = collectionViewModel.collections.contains { $0.id == currentId }
+                    
+                    // If it no longer exists, it was deleted. Reset the filter.
+                    if !collectionExists {
+                        selectedCollectionFilterId = nil
+                    }
+                }
             }
             .onChange(of: spotsViewModel.spots) { oldSpots, newSpots in
                 print("SpotListView: spotsViewModel.spots changed. Count: \(newSpots.count)")
@@ -236,14 +281,14 @@ struct SpotListView: View {
         VStack {
             Spacer()
             ProgressView().scaleEffect(1.5).tint(Color.themePrimary)
-            Text("Loading your Sweet Spots...").font(.headline).foregroundStyle(Color.themeTextSecondary).padding(.top)
+            Text("Loading your SweetSpots...").font(.headline).foregroundStyle(Color.themeTextSecondary).padding(.top)
             Spacer()
         }
     }
     
     private func emptyStateView(description: String) -> some View {
         ThemedContentUnavailableView(
-            title: "No Sweet Spots",
+            title: "No SweetSpots",
             systemImage: "sparkle.magnifyingglass",
             description: description
         )
@@ -262,7 +307,7 @@ struct SpotListView: View {
                             spot: spot,
                             userLocation: locationManager.userLocation,
                             onEdit: { editSpot(spot) },
-                            onDelete: { deleteSpot(spot) }
+                            onDelete: { requestDeleteConfirmation(for: spot) }
                         )
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -286,6 +331,12 @@ struct SpotListView: View {
         ToolbarItemGroup(placement: .navigationBarTrailing) {
             sortMenu()
             categoryFilterMenuForList()
+            Button {
+                showingAddSheet = true
+            } label: {
+                Image(systemName: "plus")
+                    .foregroundStyle(Color.themePrimary)
+            }
         }
     }
 
@@ -402,23 +453,20 @@ struct SpotListView: View {
         }
     }
 
-    private func deleteSpot(_ spot: Spot) {
-        spotsViewModel.deleteSpot(spot) { result in
-            if case .failure(let error) = result {
-                spotsViewModel.errorMessage = "Failed to delete spot: \(error.localizedDescription)"
-            }
-        }
+    private func requestDeleteConfirmation(for spot: Spot) {
+        self.spotToDelete = spot
+        self.showingDeleteConfirmation = true
     }
 
     private var currentNavigationTitle: String {
-        if showOnlyUncategorized { return "Uncategorized" }
+        if showOnlyUncollected { return "Uncollected" }
         if let id = selectedCollectionFilterId, let coll = collectionViewModel.collections.first(where: { $0.id == id }) { return coll.name }
-        return "My Sweet Spots"
+        return "My SweetSpots"
     }
     
     private func emptyStateDescriptionForFilters() -> String {
         if !searchText.isEmpty { return "No spots match your search. Try different keywords or clear filters." }
-        if showOnlyUncategorized { return "You have no spots that aren't in a collection." }
+        if showOnlyUncollected { return "You have no spots that aren't in a collection." }
         if selectedCollectionFilterId != nil { return "This collection is empty. Add some spots to it!" }
         if !selectedCategoryFilters.isEmpty { return "No spots match your selected categories. Try different ones or clear filters!"}
         return "No spots match the current filters."
@@ -433,7 +481,8 @@ struct SpotListView: View {
                 Text("No Categories Available")
             }
         } label: {
-            Label("Categories", systemImage: selectedCategoryFilters.isEmpty ? "tag.circle" : "tag.circle.fill")
+            // THE FIX: Changed the icon and label text for clarity
+            Label("Filter", systemImage: selectedCategoryFilters.isEmpty ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
                 .foregroundStyle(Color.themePrimary)
         }
     }
@@ -470,18 +519,102 @@ struct SpotCardView: View {
     let userLocation: CLLocation?
     let onEdit: () -> Void
     let onDelete: () -> Void
+    
+    @State private var locationDisplay: (icon: String, text: String)?
+    
+    var body: some View {
+        HStack(spacing: 0) {
+            Image(systemName: spot.category.systemImageName)
+                .font(.system(size: 20)).foregroundStyle(Color.white)
+                .frame(width: 40, height: 40).background(colorFromString(spot.category.associatedColor)).clipShape(Circle())
+                .padding(.leading, 16).padding(.trailing, 12)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(spot.name).font(.headline).fontWeight(.semibold).foregroundStyle(Color.themeTextPrimary).lineLimit(1)
+                HStack(spacing: 4) {
+                    Image(systemName: "mappin").font(.caption).foregroundStyle(Color.themeAccent)
+                    Text(spot.address).font(.caption).foregroundStyle(Color.themeTextSecondary).lineLimit(1)
+                }
+                if let display = locationDisplay {
+                    HStack(spacing: 4) {
+                        Image(systemName: display.icon)
+                            .font(.caption2)
+                            .foregroundStyle(Color.themeAccent)
+                        Text(display.text)
+                            .font(.caption2)
+                            .foregroundStyle(Color.themeTextSecondary)
+                    }
+                } else {
+                    // Optional: Show a placeholder while loading
+                    Text("...")
+                        .font(.caption2)
+                        .padding(.leading, 4) // To maintain layout
+                }
+            }
+            .padding(.vertical, 10)
+            Spacer()
+            
+            actionsMenu()
+                .padding(.trailing, 8)
+            Image(systemName: "chevron.right").font(.callout).foregroundStyle(Color.themeTextSecondary.opacity(0.6)).padding(.trailing, 16)
+        }
+        .frame(minHeight: 80).padding(.vertical, 6).background(Material.thin).clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.themeTextSecondary.opacity(0.1), lineWidth: 1))
+        .task(id: spot.id) {
+            await updateLocationDisplay()
+        }
+    }
+    
+    private func updateLocationDisplay() async {
+        // Guard against no user location
+        guard let userLoc = userLocation else {
+            // If no user location, just show city/country
+            locationDisplay = await geocodeSpotLocation()
+            return
+        }
 
-    private var distanceString: String {
-        guard let userLoc = userLocation else { return "" }
         let spotLoc = CLLocation(latitude: spot.latitude, longitude: spot.longitude)
         let distanceInMeters = userLoc.distance(from: spotLoc)
         
+        // Set a 100km threshold
+        let distanceThreshold: CLLocationDistance = 50_000
+
+        if distanceInMeters <= distanceThreshold {
+            // Within threshold: show precise distance
+            locationDisplay = (icon: "location.north.fill", text: formatDistance(distanceInMeters))
+        } else {
+            // Outside threshold: show city and country
+            locationDisplay = await geocodeSpotLocation()
+        }
+    }
+    
+    private func geocodeSpotLocation() async -> (icon: String, text: String) {
+        let spotLocation = CLLocation(latitude: spot.latitude, longitude: spot.longitude)
+        let geocoder = CLGeocoder()
+        
+        if let placemark = try? await geocoder.reverseGeocodeLocation(spotLocation).first {
+            let city = placemark.locality ?? ""
+            let country = placemark.country ?? ""
+            
+            if !city.isEmpty && !country.isEmpty {
+                return (icon: "globe.americas.fill", text: "\(city), \(country)")
+            } else if !city.isEmpty {
+                return (icon: "globe.americas.fill", text: city)
+            } else if !country.isEmpty {
+                return (icon: "globe.americas.fill", text: country)
+            }
+        }
+        
+        // Fallback if geocoding fails
+        return (icon: "map.fill", text: "A faraway place")
+    }
+    
+    private func formatDistance(_ distanceInMeters: CLLocationDistance) -> String {
         let formatter = LengthFormatter()
         formatter.numberFormatter.maximumFractionDigits = 1
         
         if Locale.current.measurementSystem == .us {
             let distanceInFeet = distanceInMeters * 3.28084
-            if distanceInFeet < 528 {
+            if distanceInFeet < 528 { // less than 0.1 miles
                 formatter.numberFormatter.maximumFractionDigits = 0
                 return formatter.string(fromValue: distanceInFeet, unit: .foot)
             } else {
@@ -489,8 +622,8 @@ struct SpotCardView: View {
                 return formatter.string(fromValue: distanceInMiles, unit: .mile)
             }
         } else {
-            if distanceInMeters < 100 {
-                 formatter.numberFormatter.maximumFractionDigits = 0
+            if distanceInMeters < 1000 {
+                formatter.numberFormatter.maximumFractionDigits = 0
                 return formatter.string(fromValue: distanceInMeters, unit: .meter)
             } else {
                 let distanceInKilometers = distanceInMeters / 1000
@@ -499,44 +632,37 @@ struct SpotCardView: View {
         }
     }
     
-    var body: some View {
-        HStack(spacing: 0) {
-            Image(systemName: spot.category.systemImageName)
-                .font(.system(size: 20)).foregroundStyle(Color.white)
-                .frame(width: 40, height: 40).background(Color.themePrimary).clipShape(Circle())
-                .padding(.leading, 16).padding(.trailing, 12)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(spot.name).font(.headline).fontWeight(.semibold).foregroundStyle(Color.themeTextPrimary).lineLimit(1)
-                HStack(spacing: 4) {
-                    Image(systemName: "mappin").font(.caption).foregroundStyle(Color.themeAccent)
-                    Text(spot.address).font(.caption).foregroundStyle(Color.themeTextSecondary).lineLimit(1)
-                }
-                if userLocation != nil, !distanceString.isEmpty {
-                    HStack(spacing: 4) {
-                        Image(systemName: "location.north.fill").font(.caption2).foregroundStyle(Color.themeAccent)
-                        Text(distanceString).font(.caption2).foregroundStyle(Color.themeTextSecondary)
-                    }
-                }
-            }
-            .padding(.vertical, 10)
-            Spacer()
-            HStack(spacing: 10) {
-                actionButton(systemName: "pencil", backgroundColor: .themePrimary, action: onEdit)
-                actionButton(systemName: "trash", backgroundColor: .themeError, action: onDelete)
-            }
-            .padding(.trailing, 8)
-            Image(systemName: "chevron.right").font(.callout).foregroundStyle(Color.themeTextSecondary.opacity(0.6)).padding(.trailing, 16)
+    private func colorFromString(_ colorName: String) -> Color {
+        switch colorName {
+        case "orange": return .orange
+        case "green": return .green
+        case "purple": return .purple
+        case "blue": return .blue
+        case "red": return .red
+        case "gray": return .gray
+        default: return .blue
         }
-        .frame(minHeight: 80).padding(.vertical, 6).background(Material.thin).clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.themeTextSecondary.opacity(0.1), lineWidth: 1))
     }
+    
+    @ViewBuilder
+    private func actionsMenu() -> some View {
+        Menu {
+            // Edit Button
+            Button(action: onEdit) {
+                Label("Edit SweetSpot", systemImage: "pencil")
+            }
 
-    private func actionButton(systemName: String, backgroundColor: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName).font(.system(size: 16)).foregroundStyle(Color.white)
-                .frame(width: 28, height: 28).background(backgroundColor).clipShape(Circle())
+            // Delete Button
+            Button(role: .destructive, action: onDelete) {
+                Label("Delete SweetSpot", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 22))
+                .foregroundStyle(Color.themeAccent)
+                .frame(width: 44, height: 44) // Add a frame for a larger tap area
+                .contentShape(Rectangle())
         }
-        .buttonStyle(PlainButtonStyle())
     }
 }
 

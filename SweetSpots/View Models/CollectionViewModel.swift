@@ -40,6 +40,12 @@ enum CollectionError: LocalizedError {
 
 @MainActor
 class CollectionViewModel: ObservableObject {
+    
+    public enum DeletionMode {
+            case collectionOnly // Uncategorize spots
+            case collectionAndSpots // Delete spots as well
+        }
+    
     @Published var collections: [SpotCollection] = []
     @Published var errorMessage: String?
     @Published var isLoading: Bool = false
@@ -170,7 +176,6 @@ class CollectionViewModel: ObservableObject {
             return
         }
         
-        // ✅ IMPROVEMENT: Check for duplicates excluding current collection
         if isDuplicateCollectionName(trimmedName, for: collection.userId, excluding: collectionId) {
             completion(.failure(CollectionError.duplicateName))
             return
@@ -178,133 +183,153 @@ class CollectionViewModel: ObservableObject {
         
         isLoading = true
         
-        var collectionToUpdate = collection
-        collectionToUpdate.name = trimmedName
-        collectionToUpdate.descriptionText = collectionToUpdate.descriptionText?.trimmed()
+        // --- CORRECTED LOGIC ---
+        // 1. Manually create a dictionary to ensure we can handle field deletion.
+        var updateData: [String: Any] = [
+            "name": trimmedName
+        ]
         
-        do {
-            try userCollectionsRef(userId: collectionToUpdate.userId).document(collectionId).setData(from: collectionToUpdate, merge: true) { [weak self] error in
-                Task { @MainActor [weak self] in
-                    guard let self = self else { return }
-                    self.isLoading = false
-                    
-                    if let error = error {
-                        print("CollectionViewModel: Failed to update collection '\(trimmedName)': \(error.localizedDescription)")
-                        completion(.failure(CollectionError.firestoreError(underlyingError: error)))
-                    } else {
-                        print("CollectionViewModel: Successfully updated collection '\(trimmedName)'")
-                        completion(.success(()))
-                    }
-                }
-            }
-        } catch {
-            self.isLoading = false
-            print("CollectionViewModel: Error encoding collection update for '\(trimmedName)': \(error.localizedDescription)")
-            completion(.failure(CollectionError.encodingError(underlyingError: error)))
-        }
-    }
-
-    /// Deletes a collection and optionally updates associated spots to remove their collectionId.
-    func deleteCollection(_ collection: SpotCollection, updateSpotsViewModel: SpotViewModel?, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard let collectionId = collection.id, !collection.userId.isEmpty else {
-            completion(.failure(CollectionError.missingIDs))
-            return
+        // 2. If the description is present, add it. If it's nil or an empty string,
+        //    explicitly tell Firestore to delete the field.
+        if let description = collection.descriptionText?.trimmed() {
+            updateData["descriptionText"] = description
+        } else {
+            updateData["descriptionText"] = FieldValue.delete()
         }
         
-        isLoading = true
+        let docRef = userCollectionsRef(userId: collection.userId).document(collectionId)
         
-        userCollectionsRef(userId: collection.userId).document(collectionId).delete { [weak self] error in
+        // 3. Use `updateData` instead of `setData(from:merge:)`
+        docRef.updateData(updateData) { [weak self] error in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
-
-                if let error = error {
-                    self.isLoading = false
-                    print("CollectionViewModel: Failed to delete collection '\(collection.name)': \(error.localizedDescription)")
-                    completion(.failure(CollectionError.firestoreError(underlyingError: error)))
-                } else {
-                    print("CollectionViewModel: Collection '\(collection.name)' deleted. Now updating associated spots.")
-                    self.removeCollectionIdFromSpots(
-                        deletedCollectionId: collectionId,
-                        userId: collection.userId,
-                        spotsViewModel: updateSpotsViewModel,
-                        completion: completion
-                    )
-                }
-            }
-        }
-    }
-    
-    // ✅ IMPROVEMENT: Enhanced spot cleanup with better error handling
-    private func removeCollectionIdFromSpots(deletedCollectionId: String, userId: String, spotsViewModel: SpotViewModel?, completion: @escaping (Result<Void, Error>) -> Void) {
-        guard let spotsVM = spotsViewModel else {
-            print("CollectionViewModel: SpotViewModel not provided; spots will remain linked to deleted collection \(deletedCollectionId).")
-            self.isLoading = false
-            completion(.success(()))
-            return
-        }
-
-        let spotsToUpdate = spotsVM.spots.filter { $0.collectionId == deletedCollectionId && $0.userId == userId }
-
-        if spotsToUpdate.isEmpty {
-            print("CollectionViewModel: No spots found associated with deleted collection \(deletedCollectionId).")
-            self.isLoading = false
-            completion(.success(()))
-            return
-        }
-
-        print("CollectionViewModel: Found \(spotsToUpdate.count) spots to update after collection deletion.")
-        
-        // ✅ IMPROVEMENT: Use TaskGroup for better async handling
-        Task {
-            var failureCount = 0
-            var successCount = 0
-            var firstError: Error?
-            
-            await withTaskGroup(of: Bool.self) { group in
-                for spot in spotsToUpdate {
-                    group.addTask { @MainActor in
-                        await withCheckedContinuation { continuation in
-                            var mutableSpot = spot
-                            mutableSpot.collectionId = nil
-                            
-                            spotsVM.updateSpot(mutableSpot) { result in
-                                switch result {
-                                case .success:
-                                    continuation.resume(returning: true)
-                                case .failure(let error):
-                                    if firstError == nil {
-                                        firstError = error
-                                    }
-                                    print("CollectionViewModel: Failed to update spot \(spot.id ?? "Unknown") after collection deletion: \(error.localizedDescription)")
-                                    continuation.resume(returning: false)
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                for await success in group {
-                    if success {
-                        successCount += 1
-                    } else {
-                        failureCount += 1
-                    }
-                }
-            }
-            
-            await MainActor.run {
                 self.isLoading = false
                 
-                if failureCount > 0 {
-                    let details = "Updated \(successCount) spots successfully, \(failureCount) failed"
-                    completion(.failure(CollectionError.spotUpdateFailed(details: details)))
+                if let error = error {
+                    print("CollectionViewModel: Failed to update collection '\(trimmedName)': \(error.localizedDescription)")
+                    completion(.failure(CollectionError.firestoreError(underlyingError: error)))
                 } else {
-                    print("CollectionViewModel: Successfully updated \(successCount) spots after collection deletion.")
+                    print("CollectionViewModel: Successfully updated collection '\(trimmedName)'")
+                    // Note: The local listener will automatically handle the UI update.
                     completion(.success(()))
                 }
             }
         }
     }
+
+    /// Deletes a collection and optionally updates associated spots to remove their collectionId.
+    func deleteCollection(
+        _ collection: SpotCollection,
+        mode: DeletionMode,
+        updateSpotsViewModel: SpotViewModel?,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        guard let collectionId = collection.id, !collection.userId.isEmpty else {
+            completion(.failure(CollectionError.missingIDs))
+            return
+        }
+        
+        guard let spotsVM = updateSpotsViewModel else {
+            // If we don't have a spots view model, we can't update spots.
+            // We can only proceed if the user wants to delete the collection only.
+            if mode == .collectionAndSpots {
+                completion(.failure(CollectionError.spotUpdateFailed(details: "SpotViewModel was not available to delete spots.")))
+                return
+            }
+            // Proceed with deleting the collection document only
+            deleteCollectionDocument(collection, completion: completion)
+            return
+        }
+
+        isLoading = true
+        
+        // Find all spots associated with this collection
+        let spotsToUpdate = spotsVM.spots.filter { $0.collectionId == collectionId }
+        
+        // Perform the requested action on the spots (uncategorize or delete)
+        handleSpotUpdates(for: mode, spots: spotsToUpdate, using: spotsVM) { [weak self] result in
+            guard let self = self else { return }
+            
+            switch result {
+            case .success:
+                // After spots are handled successfully, delete the collection document
+                self.deleteCollectionDocument(collection, completion: completion)
+            case .failure(let error):
+                // If spot updates failed, do not delete the collection and report the error.
+                self.isLoading = false
+                completion(.failure(error))
+            }
+        }
+    }
+    
+    private func handleSpotUpdates(
+            for mode: DeletionMode,
+            spots: [Spot],
+            using spotsVM: SpotViewModel,
+            completion: @escaping (Result<Void, Error>) -> Void
+        ) {
+            if spots.isEmpty {
+                completion(.success(()))
+                return
+            }
+            
+            Task {
+                do {
+                    try await withThrowingTaskGroup(of: Void.self) { group in
+                        for spot in spots {
+                            // THE FIX: Add `@MainActor in` to ensure this closure runs on the main thread.
+                            group.addTask { @MainActor in
+                                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                                    if mode == .collectionOnly {
+                                        // UNCATEGORIZE: Update the spot to remove its collectionId
+                                        var mutableSpot = spot
+                                        mutableSpot.collectionId = nil
+                                        spotsVM.updateSpot(mutableSpot) { result in
+                                            switch result {
+                                            case .success: continuation.resume()
+                                            case .failure(let error): continuation.resume(throwing: error)
+                                            }
+                                        }
+                                    } else {
+                                        // DELETE: Delete the entire spot
+                                        spotsVM.deleteSpot(spot) { result in
+                                            switch result {
+                                            case .success: continuation.resume()
+                                            case .failure(let error): continuation.resume(throwing: error)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // This will re-throw the first error it encounters from any task
+                        try await group.waitForAll()
+                    }
+                    completion(.success(()))
+                } catch {
+                    completion(.failure(CollectionError.spotUpdateFailed(details: error.localizedDescription)))
+                }
+            }
+        }
+
+        // 4. New private helper to just delete the Firestore document
+        private func deleteCollectionDocument(_ collection: SpotCollection, completion: @escaping (Result<Void, Error>) -> Void) {
+            guard let collectionId = collection.id else {
+                completion(.failure(CollectionError.missingIDs)); return
+            }
+            
+            userCollectionsRef(userId: collection.userId).document(collectionId).delete { error in
+                Task { @MainActor in
+                    self.isLoading = false
+                    if let error = error {
+                        completion(.failure(CollectionError.firestoreError(underlyingError: error)))
+                    } else {
+                        // The Firestore listener will automatically remove it from the local `collections` array.
+                        completion(.success(()))
+                    }
+                }
+            }
+        }
 
     /// Detaches the Firestore listener for collections.
     func detachCollectionsListener() {

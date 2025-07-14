@@ -230,9 +230,9 @@ struct AddSpotView: View {
     // MARK: - Computed Properties
     private var navigationTitleString: String {
         switch mode {
-        case .addNewManual: return "Add New Spot"
-        case .addFromShare: return "New Spot from Share"
-        case .edit: return "Edit Sweet Spot"
+        case .addNewManual: return "Add New SweetSpot"
+        case .addFromShare: return "New SweetSpot from Share"
+        case .edit: return "Edit SweetSpot"
         }
     }
 
@@ -245,6 +245,10 @@ struct AddSpotView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
+                // The main container for our new dynamic form list
+                formContentContainer()
+                    .layoutPriority(1)
+                
                 // WebView for context when adding from a shared link
                 if mode == .addFromShare, let url = prefilledURL {
                     // Pass the persistent webView from the store into your WebView struct
@@ -258,10 +262,6 @@ struct AddSpotView: View {
                     .opacity(showWebView ? 1 : 0)
                     .animation(.easeInOut(duration: 0.3), value: showWebView)
                 }
-
-                // The main container for our new dynamic form list
-                formContentContainer()
-                    .layoutPriority(1)
             }
             .navigationTitle(navigationTitleString)
             .navigationBarTitleDisplayMode(.inline)
@@ -365,7 +365,7 @@ struct AddSpotView: View {
                         ProgressView().tint(Color.themeButtonText)
                         Text(mode == .edit ? "Updating..." : "Saving...").padding(.leading, 8)
                     } else {
-                        let title = (mode == .addFromShare && spotForms.count > 1) ? "Save All \(spotForms.count) Spots" : (mode == .edit ? "Update Sweet Spot" : "Save Sweet Spot")
+                        let title = (mode == .addFromShare && spotForms.count > 1) ? "Save All \(spotForms.count) Spots" : (mode == .edit ? "Update SweetSpot" : "Save SweetSpot")
                         Text(title)
                     }
                     Spacer()
@@ -605,7 +605,8 @@ struct SpotFormSectionView: View {
             Button("Create") { handleCreateCollection() }
                 .disabled(newCollectionName.trimmingCharacters(in: .whitespaces).isEmpty)
             Button("Cancel", role: .cancel) { }
-        } message: { Text("Enter a name for your new collection.") }
+        } message: {Text("Collections are like folders to organize your spots")
+ }
         .onChange(of: focusedField) { oldValue, newValue in
             if newValue != nil { onFieldFocused() }
             else if oldValue != nil && newValue == nil { onFieldBlurred() }

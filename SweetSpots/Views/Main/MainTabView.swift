@@ -34,13 +34,11 @@ struct MainTabView: View {
     }
     
     enum ActiveSheet: Identifiable {
-        case manualAddSpot
         case sharedURLAddSpot(url: URL)
         case spotDetail(spot: Spot) // Pass the whole Spot object
         
         var id: String {
             switch self {
-            case .manualAddSpot: return "manualAddSpot"
             case .sharedURLAddSpot(let url): return "sharedURLAddSpot-\(url.absoluteString)"
             case .spotDetail(let spot): return "spotDetail-\(spot.hashValue)" // Use hashValue
             }
@@ -63,19 +61,12 @@ struct MainTabView: View {
     // MARK: - Body
     var body: some View {
         GeometryReader { geometry in
-            ZStack(alignment: .bottomTrailing) {
-                TabView(selection: $selectedTab) {
-                    spotListTab()
-                    mapTab()
-                    settingsTab()
-                }
-                .accentColor(Color.themePrimary)
-                
-                if selectedTab == 0 || selectedTab == 1 {
-                    addSpotButtonOverlay(geometry: geometry)
-                        .transition(.scale.combined(with: .opacity))
-                }
+            TabView(selection: $selectedTab) {
+                spotListTab()
+                mapTab()
+                settingsTab()
             }
+            .accentColor(Color.themePrimary)
             // Inject all owned VMs into the environment for child views
             .environmentObject(locationManager)
             .environmentObject(spotsViewModel)
@@ -146,8 +137,6 @@ struct MainTabView: View {
     @ViewBuilder
     private func sheetView(for sheetType: ActiveSheet) -> some View {
         switch sheetType {
-        case .manualAddSpot:
-            AddSpotView(isPresented: sheetBinding(), spotToEdit: nil, prefilledURL: nil)
         case .sharedURLAddSpot(let url):
             AddSpotView(isPresented: sheetBinding(), spotToEdit: nil, prefilledURL: url)
         case .spotDetail(let spot):
@@ -183,24 +172,6 @@ struct MainTabView: View {
                 Label("Settings", systemImage: selectedTab == 2 ? "gearshape.fill" : "gearshape")
             }
             .tag(2)
-    }
-    
-    // MARK: - UI Components
-    private func addSpotButtonOverlay(geometry: GeometryProxy) -> some View {
-        Button {
-            activeSheet = .manualAddSpot
-        } label: {
-            Image(systemName: "plus.circle.fill")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 56, height: 56)
-                .foregroundStyle(Color.white)
-                .background(Color.themeAccent)
-                .clipShape(Circle())
-                .shadow(color: Color.black.opacity(0.3), radius: 3, x: 0, y: 3)
-        }
-        .padding(.trailing, 20)
-        .padding(.bottom, geometry.safeAreaInsets.bottom + 25)
     }
     
     // MARK: - Helper Methods
