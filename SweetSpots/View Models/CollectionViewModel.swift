@@ -51,7 +51,6 @@ class CollectionViewModel: ObservableObject {
     @Published var isLoading: Bool = false
 
     private let db = Firestore.firestore()
-    // ✅ FIXED: Removed nonisolated(unsafe) - MainActor isolation is sufficient
     private var collectionsListenerRegistration: ListenerRegistration?
 
     // Deinitializer to remove listener
@@ -140,9 +139,6 @@ class CollectionViewModel: ObservableObject {
         var newCollection = SpotCollection(userId: userId, name: trimmedName, descriptionText: finalDescription)
         
         do {
-            // --- THE FIX ---
-            // Now we are correctly awaiting our custom async wrapper.
-            // The compiler warning will disappear.
             let documentReference = try await userCollectionsRef(userId: userId).addDocument(from: newCollection)
             
             let newId = documentReference.documentID
@@ -277,7 +273,6 @@ class CollectionViewModel: ObservableObject {
                 do {
                     try await withThrowingTaskGroup(of: Void.self) { group in
                         for spot in spots {
-                            // THE FIX: Add `@MainActor in` to ensure this closure runs on the main thread.
                             group.addTask { @MainActor in
                                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                                     if mode == .collectionOnly {
@@ -395,7 +390,6 @@ extension CollectionReference {
         try await withCheckedThrowingContinuation { continuation in
             var ref: DocumentReference?
             
-            // --- FIX FOR ERROR #1: Use do-catch for the initial call ---
             do {
                 // The call to addDocument(from:completion:) can itself throw an
                 // encoding error, so we must wrap it in a `do-catch`.
@@ -407,7 +401,6 @@ extension CollectionReference {
                         // This handles the success case.
                         continuation.resume(returning: ref)
                     } else {
-                        // --- FIX FOR ERROR #2: Use the pre-defined error type ---
                         // This handles the unlikely case of no error and no reference.
                         continuation.resume(throwing: FirestoreWrapperError.unexpectedNilReference)
                     }

@@ -233,7 +233,6 @@ class LocationManager: NSObject, ObservableObject {
     
     // MARK: - Permission Management
     func requestLocationAuthorization(aimForAlways: Bool = false) {
-        // ✅ FIX #3: Correctly call the static helper method with the class name.
         print("Requesting location authorization. Current status: \(LocationManager.string(for: authorizationStatus)). Aiming for Always: \(aimForAlways)")
 
         switch authorizationStatus {

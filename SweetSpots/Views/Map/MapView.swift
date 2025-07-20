@@ -26,6 +26,7 @@ struct MapView: View {
     @State private var selectedSpotId: String? = nil
     
     @State private var showClarityPopup: Bool = false
+    @State private var popupTask: Task<Void, Never>?
     
     @State private var isNavigating: Bool = false // <<<< NEW: To track
 
@@ -50,7 +51,6 @@ struct MapView: View {
         spotsForMap.filter { $0.wantsNearbyNotification && globalGeofencingEnabled }
     }
     
-    // ✅ FIXED: Computed property to get the selected spot from the current data
     private var selectedSpotForAnnotation: Spot? {
         guard let selectedId = selectedSpotId else { return nil }
         return spotsViewModel.spots.first { $0.id == selectedId }
@@ -62,7 +62,6 @@ struct MapView: View {
             set: { isShowing in
                 if !isShowing {
                     selectedSpotIdForSheet = nil
-                    // ✅ FIXED: Clear the selected spot ID as well
                     selectedSpotId = nil
                 }
             }
@@ -104,7 +103,6 @@ struct MapView: View {
                     }
                 }
             }
-            // --- FIXED: All these modifiers now apply to the ZStack ---
             .onAppear { handleInitialLocationSetup() }
             .task { await fallbackInitialCameraIfNeeded() }
             .onChange(of: locationManager.userLocation, handleLocationChange)
@@ -115,6 +113,24 @@ struct MapView: View {
                 if isNavigating, let userLocation = locationManager.userLocation {
                     // When navigation starts, immediately snap the camera to the user's location in navigation mode.
                     updateCameraForNavigation(userLocation: userLocation)
+                }
+            }
+            .onChange(of: showClarityPopup) {
+                // When the popup appears...
+                if showClarityPopup {
+                    // ...cancel any previous timer that might still be running...
+                    popupTask?.cancel()
+                    
+                    // ...and start a new one.
+                    popupTask = Task {
+                        // Wait for 2 seconds
+                        try? await Task.sleep(for: .seconds(2))
+                        
+                        // Now, hide the popup with an animation
+                        withAnimation {
+                            showClarityPopup = false
+                        }
+                    }
                 }
             }
             .toolbar {
@@ -179,15 +195,6 @@ struct MapView: View {
             }
             .padding(.bottom, 100)
             .allowsHitTesting(false)
-            .onAppear {
-                // Automatically hide this popup after 3 seconds
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    withAnimation {
-                        // This only hides the popup, not the zones themselves
-                        showClarityPopup = false
-                    }
-                }
-            }
         }
     }
     
@@ -249,7 +256,6 @@ struct MapView: View {
                 }
             }
             .sheet(item: $selectedSpot) { spot in
-                // ✅ THIS IS THE FIX:
                 // We now initialize SpotDetailView with the ID from the selected spot.
                 SpotDetailView(spotId: spot.id ?? "")
                     .environmentObject(authViewModel)
@@ -285,7 +291,6 @@ struct MapView: View {
                     .foregroundColor(.blue)
                     .font(.caption)
                 
-                // THE FIX (Grammar & Casing):
                 // This now correctly shows "1 Active Alert" or "X Active Alerts"
                 Text("\(spotsWithGeofences.count) Active Alert\(spotsWithGeofences.count == 1 ? "" : "s")")
                     .font(.caption)
@@ -298,7 +303,6 @@ struct MapView: View {
                         .foregroundColor(.orange)
                         .font(.caption2)
                     
-                    // THE FIX (Casing):
                     Text("Need Always Permission")
                         .font(.caption2)
                         .foregroundColor(.orange)
@@ -518,7 +522,8 @@ struct SpotAnnotationView: View {
         case "purple": return .purple
         case "blue": return .blue
         case "red": return .red
-        case "gray": return .gray
+        case "teal": return .teal
+        case "indigo": return .indigo
         default: return .blue
         }
     }
@@ -628,7 +633,6 @@ private struct MapZoomControls: View {
                 span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
             )
             
-            // ✅ This is the key fix for the recenter bug.
             // We update BOTH the camera and the local region state simultaneously.
             withAnimation(.easeInOut(duration: 0.5)) {
                 currentRegion = newRegion

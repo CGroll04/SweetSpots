@@ -23,6 +23,8 @@ struct SpotListView: View {
     @State private var collectionToEdit: SpotCollection? = nil
     @State private var spotToDelete: Spot? = nil
     @State private var showingDeleteConfirmation = false
+    @State private var selectedTab: SpotTab = .notVisited
+
 
     // MARK: - Filtering & Sorting State
     @State private var selectedCategoryFilters: Set<SpotCategory> = []
@@ -43,6 +45,14 @@ struct SpotListView: View {
             set: { if !$0 { spotToEdit = nil } }
         )
     }
+    
+    private var notVisitedSpots: [Spot] {
+        displayedSpots.filter { $0.visitCount == 0 }
+    }
+
+    private var visitedSpots: [Spot] {
+        displayedSpots.filter { $0.visitCount > 0 }
+    }
 
     enum SortOrder: String, CaseIterable, Identifiable {
         case dateDescending = "Newest First"
@@ -53,8 +63,11 @@ struct SpotListView: View {
         case distanceAscending = "Distance (Nearest)"
         var id: String { self.rawValue }
     }
+    enum SpotTab {
+        case notVisited
+        case visited
+    }
 
-    // ✅ FIXED: Computed property instead of @State for displayedSpots
     private var displayedSpots: [Spot] {
         var workingSpots = spotsViewModel.spots
 
@@ -293,28 +306,83 @@ struct SpotListView: View {
             description: description
         )
     }
-
+    
     private func spotsScrollView() -> some View {
+        VStack(spacing: 0) {
+            // 1. The Top Menu Bar (Segmented Picker)
+            Picker("Spots", selection: $selectedTab.animation()) {
+                Text("Bucket List (\(notVisitedSpots.count))").tag(SpotTab.notVisited)
+                Text("Visited (\(visitedSpots.count))").tag(SpotTab.visited)
+            }
+            .pickerStyle(.segmented)
+            .padding()
+
+            // 2. The TabView that holds the lists
+            TabView(selection: $selectedTab) {
+                spotList(for: notVisitedSpots)
+                    .tag(SpotTab.notVisited)
+
+                spotList(for: visitedSpots)
+                    .tag(SpotTab.visited)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+        }
+    }
+
+    // Helper view to avoid duplicating the list code
+    @ViewBuilder
+    private func spotList(for spots: [Spot]) -> some View {
         ScrollView {
             LazyVStack(spacing: 16) {
-                if let errorMessage = spotsViewModel.errorMessage, !errorMessage.isEmpty {
-                    ErrorBannerView(message: errorMessage)
-                        .padding(.horizontal)
-                }
-                ForEach(displayedSpots) { spot in
+                ForEach(spots) { spot in
                     NavigationLink(value: spot) {
                         SpotCardView(
                             spot: spot,
                             userLocation: locationManager.userLocation,
                             onEdit: { editSpot(spot) },
-                            onDelete: { requestDeleteConfirmation(for: spot) }
+                            onDelete: { requestDeleteConfirmation(for: spot) },
+                            onIncrement: { handleIncrement(for: spot) }, // Updated
+                            onDecrement: { spotsViewModel.decrementVisitCount(for: spot) },
+                            onReset: {
+                                    withAnimation {
+                                        selectedTab = .notVisited
+                                    }
+                                    spotsViewModel.resetVisitCount(for: spot)
+                                }
                         )
                     }
-                    .buttonStyle(PlainButtonStyle())
                 }
             }
-            .padding()
+            .padding(.horizontal)
         }
+    }
+    
+    struct SectionHeader: View {
+        let title: String
+        let icon: String
+        let count: Int
+
+        var body: some View {
+            HStack {
+                Image(systemName: icon).foregroundStyle(Color.themeAccent)
+                Text(title).font(.headline)
+                Spacer()
+                Text("(\(count))").foregroundStyle(.secondary).font(.subheadline)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+    
+    private func handleIncrement(for spot: Spot) {
+        // Check if this is the FIRST visit
+        if spot.visitCount == 0 {
+            // If so, switch to the "Visited" tab with an animation
+            withAnimation {
+                selectedTab = .visited
+            }
+        }
+        // Then, call the ViewModel to increment the count as before
+        spotsViewModel.incrementVisitCount(for: spot)
     }
     
     // MARK: - Toolbar
@@ -481,7 +549,6 @@ struct SpotListView: View {
                 Text("No Categories Available")
             }
         } label: {
-            // THE FIX: Changed the icon and label text for clarity
             Label("Filter", systemImage: selectedCategoryFilters.isEmpty ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
                 .foregroundStyle(Color.themePrimary)
         }
@@ -519,48 +586,115 @@ struct SpotCardView: View {
     let userLocation: CLLocation?
     let onEdit: () -> Void
     let onDelete: () -> Void
-    
+    let onIncrement: () -> Void
+    let onDecrement: () -> Void
+    let onReset: () -> Void
+
     @State private var locationDisplay: (icon: String, text: String)?
+    @State private var showUndoBanner = false
+    @State private var undoTimer: Timer? = nil
+    @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
-        HStack(spacing: 0) {
-            Image(systemName: spot.category.systemImageName)
-                .font(.system(size: 20)).foregroundStyle(Color.white)
-                .frame(width: 40, height: 40).background(colorFromString(spot.category.associatedColor)).clipShape(Circle())
-                .padding(.leading, 16).padding(.trailing, 12)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(spot.name).font(.headline).fontWeight(.semibold).foregroundStyle(Color.themeTextPrimary).lineLimit(1)
-                HStack(spacing: 4) {
-                    Image(systemName: "mappin").font(.caption).foregroundStyle(Color.themeAccent)
-                    Text(spot.address).font(.caption).foregroundStyle(Color.themeTextSecondary).lineLimit(1)
-                }
-                if let display = locationDisplay {
-                    HStack(spacing: 4) {
-                        Image(systemName: display.icon)
-                            .font(.caption2)
-                            .foregroundStyle(Color.themeAccent)
-                        Text(display.text)
-                            .font(.caption2)
-                            .foregroundStyle(Color.themeTextSecondary)
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                // Leading Category Icon
+                Image(systemName: spot.category.systemImageName)
+                    .font(.system(size: 18))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .background(colorFromString(spot.category.associatedColor))
+                    .clipShape(Circle())
+                    .padding(.leading, 12)
+                    .padding(.trailing, 10)
+
+                // Main Content
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(spot.name)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.themeTextPrimary)
+                        .lineLimit(1)
+
+                    HStack(spacing: 6) {
+                        if let display = locationDisplay {
+                            Label(display.text, systemImage: display.icon)
+                                .font(.caption2)
+                                .foregroundStyle(Color.themeTextSecondary)
+                                .lineLimit(1)
+                        }
+                        
+                        if spot.visitCount > 0 {
+                            Text("Visited: \(spot.visitCount)")
+                                .font(.caption2)
+                                .foregroundStyle(Color.themeAccent)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Color.themeAccent.opacity(0.1))
+                                .clipShape(Capsule())
+                        }
                     }
-                } else {
-                    // Optional: Show a placeholder while loading
-                    Text("...")
-                        .font(.caption2)
-                        .padding(.leading, 4) // To maintain layout
                 }
+                .padding(.vertical, 10)
+
+                Spacer()
+
+                // Actions Menu
+                actionsMenu()
+                    .padding(.trailing, 6)
+
+                // Chevron
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(Color.themeTextSecondary.opacity(0.6))
+                    .padding(.trailing, 10)
             }
-            .padding(.vertical, 10)
-            Spacer()
-            
-            actionsMenu()
-                .padding(.trailing, 8)
-            Image(systemName: "chevron.right").font(.callout).foregroundStyle(Color.themeTextSecondary.opacity(0.6)).padding(.trailing, 16)
+            .frame(minHeight: 70)
+            .padding(.vertical, 6)
+            .background(Material.thin)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay {
+                    RoundedRectangle(cornerRadius: 16)
+                    .stroke(
+                        colorScheme == .dark ? Color.white.opacity(0.2) : Color.black.opacity(0.1),
+                        lineWidth: 1
+                    )
+                }            .task(id: spot.id) {
+                await updateLocationDisplay()
+            }
+
+            // Undo Popup
+            if showUndoBanner {
+                HStack {
+                    Text("Marked as visited")
+                    Spacer()
+                    Button("Undo") {
+                        onDecrement()
+                        undoTimer?.invalidate()
+                        showUndoBanner = false
+                    }
+                }
+                .font(.footnote)
+                .foregroundStyle(Color.white)
+                .padding()
+                .background(Color.black.opacity(0.9))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .padding(.horizontal, 12)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .animation(.easeInOut, value: showUndoBanner)
+            }
         }
-        .frame(minHeight: 80).padding(.vertical, 6).background(Material.thin).clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.themeTextSecondary.opacity(0.1), lineWidth: 1))
-        .task(id: spot.id) {
-            await updateLocationDisplay()
+    }
+
+    private func showUndoPopupTemporarily() {
+        withAnimation {
+            showUndoBanner = true
+        }
+        undoTimer?.invalidate()
+        undoTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: false) { _ in
+            withAnimation {
+                showUndoBanner = false
+            }
         }
     }
     
@@ -639,7 +773,8 @@ struct SpotCardView: View {
         case "purple": return .purple
         case "blue": return .blue
         case "red": return .red
-        case "gray": return .gray
+        case "teal": return .teal
+        case "indigo": return .indigo
         default: return .blue
         }
     }
@@ -647,20 +782,50 @@ struct SpotCardView: View {
     @ViewBuilder
     private func actionsMenu() -> some View {
         Menu {
-            // Edit Button
-            Button(action: onEdit) {
-                Label("Edit SweetSpot", systemImage: "pencil")
+            // This is the new "Add Visit" button
+            Button {
+                onIncrement()
+            } label: {
+                Label("Add Visit", systemImage: "plus")
             }
 
-            // Delete Button
-            Button(role: .destructive, action: onDelete) {
-                Label("Delete SweetSpot", systemImage: "trash")
+            // Section for visit management
+            if spot.visitCount > 0 {
+                Divider()
+                
+                Button {
+                    onDecrement()
+                } label: {
+                    Label("Remove Visit", systemImage: "minus")
+                }
+                
+                Button(role: .destructive) {
+                    onReset()
+                } label: {
+                    Label("Reset Visits", systemImage: "arrow.counterclockwise")
+                }
             }
+            
+            // Section for editing and deleting
+            Divider()
+            
+            Button {
+                onEdit()
+            } label: {
+                Label("Edit Spot", systemImage: "pencil")
+            }
+            
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("Delete Spot", systemImage: "trash")
+            }
+            
         } label: {
-            Image(systemName: "ellipsis.circle")
-                .font(.system(size: 22))
-                .foregroundStyle(Color.themeAccent)
-                .frame(width: 44, height: 44) // Add a frame for a larger tap area
+            Image(systemName: "ellipsis.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.gray.opacity(0.8))
+                .frame(width: 44, height: 44) // Make the tap area larger
                 .contentShape(Rectangle())
         }
     }

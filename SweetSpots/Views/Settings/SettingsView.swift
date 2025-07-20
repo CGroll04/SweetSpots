@@ -320,7 +320,6 @@ struct SettingsView: View {
                     group.addTask { @MainActor in
                         await withCheckedContinuation { continuation in
                             self.spotsViewModel.updateSpot(spot) { result in
-                                // --- FIX IS HERE ---
                                 // Check the case of the Result instead of using a non-existent property
                                 switch result {
                                 case .success:
