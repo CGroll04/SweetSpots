@@ -32,6 +32,7 @@ struct SideMenuView: View {
             List { // Using a List is more conventional for settings/menu lists and handles scrolling
                 defaultFiltersSection()
                 myCollectionsSection()
+                recentlyDeletedSection()
                 actionsSection()
             }
             .listStyle(InsetGroupedListStyle()) // Or .plain for a tighter look
@@ -66,7 +67,65 @@ struct SideMenuView: View {
     }
     
     // MARK: - Subviews for Body Sections
+    @ViewBuilder
+    private func recentlyDeletedSection() -> some View {
+        // Only show this section if there are items to display
+        if !spotsViewModel.recentlyDeletedSpots.isEmpty {
+            Section(header: Text("Recently Deleted")) {
+                ForEach(spotsViewModel.recentlyDeletedSpots) { spot in
+                    HStack {
+                        // The existing view for the name and day counter
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(spot.name)
+                                .foregroundStyle(.primary)
+                            
+                            if let days = daysRemaining(for: spot) {
+                                Text("Permanently deleted in \(days) day\(days == 1 ? "" : "s")")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
 
+                        Spacer()
+
+                        // This is the new menu that replaces the swipe actions
+                        Menu {
+                            Button {
+                                spotsViewModel.restoreSpot(spot)
+                            } label: {
+                                Label("Restore Spot", systemImage: "arrow.uturn.backward.circle.fill")
+                            }
+
+                            Button(role: .destructive) {
+                                spotsViewModel.permanentlyDeleteSpot(spot)
+                            } label: {
+                                Label("Delete Permanently", systemImage: "trash.fill")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .font(.body)
+                                .contentShape(Rectangle()) // Makes the tap area reliable
+                        }
+                        .tint(.secondary) // Makes the ellipsis icon gray
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+        }
+    }
+
+    // Helper function to calculate days remaining
+    private func daysRemaining(for spot: Spot) -> Int? {
+        guard let deletedDate = spot.deletedAt?.dateValue() else { return nil }
+        let calendar = Calendar.current
+        // Calculate the expiration date by adding 30 days to the deletion date
+        let expirationDate = calendar.date(byAdding: .day, value: 30, to: deletedDate) ?? deletedDate
+        // Find the number of days from now until the expiration date
+        let components = calendar.dateComponents([.day], from: Date(), to: expirationDate)
+        // Return the number of days, ensuring it's not negative
+        return max(0, components.day ?? 0)
+    }
+    
     @ViewBuilder
     private func defaultFiltersSection() -> some View {
         Section(header: Text("Filters")) {

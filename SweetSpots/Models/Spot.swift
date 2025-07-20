@@ -38,6 +38,8 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         }
     }
     var collectionId: String?     // Optional: ID of the SpotCollection this spot belongs to
+    var visitCount: Int = 0
+    var deletedAt: Timestamp? = nil
 
     /// Provides map-compatible coordinates.
     var coordinate: CLLocationCoordinate2D {
@@ -92,6 +94,8 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
             case _notificationRadiusMeters = "notificationRadiusMeters"
             case collectionId
             case notes
+            case visitCount
+            case deletedAt
         }
 
     // ✅ CLEANED UP: Removed trailing whitespace
@@ -109,7 +113,9 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         collectionId: String? = nil,
         wantsNearbyNotification: Bool = false,
         notificationRadiusMeters: Double = 200.0,
-        notes: String? = nil
+        notes: String? = nil,
+        visitCount: Int = 0,
+        deletedAt: Timestamp? = nil
     ) {
         self.id = id
         self.userId = userId
@@ -124,6 +130,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         self.collectionId = collectionId
         self.wantsNearbyNotification = wantsNearbyNotification
         self.notes = notes
+        self.deletedAt = deletedAt
         
         // ✅ IMPROVEMENT: Validate and clamp radius to valid range
         self.notificationRadiusMeters = notificationRadiusMeters
@@ -164,6 +171,28 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
               !urlString.isEmpty else { return true } // nil or empty is valid
         return URL(string: urlString) != nil
     }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        userId = try container.decode(String.self, forKey: .userId)
+        name = try container.decode(String.self, forKey: .name)
+        address = try container.decode(String.self, forKey: .address)
+        latitude = try container.decode(Double.self, forKey: .latitude)
+        longitude = try container.decode(Double.self, forKey: .longitude)
+        sourceURL = try container.decodeIfPresent(String.self, forKey: .sourceURL)
+        category = try container.decode(SpotCategory.self, forKey: .category)
+        phoneNumber = try container.decodeIfPresent(String.self, forKey: .phoneNumber)
+        websiteURL = try container.decodeIfPresent(String.self, forKey: .websiteURL)
+        collectionId = try container.decodeIfPresent(String.self, forKey: .collectionId)
+        wantsNearbyNotification = try container.decodeIfPresent(Bool.self, forKey: .wantsNearbyNotification) ?? false
+        _notificationRadiusMeters = try container.decodeIfPresent(Double.self, forKey: ._notificationRadiusMeters) ?? 200.0
+        notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        createdAt = try container.decodeIfPresent(Timestamp.self, forKey: .createdAt)
+        deletedAt = try container.decodeIfPresent(Timestamp.self, forKey: .deletedAt)
+        
+
+        visitCount = try container.decodeIfPresent(Int.self, forKey: .visitCount) ?? 0
+    }
 }
 
 /// Defines categories for spots, with associated display names and icons.
@@ -173,6 +202,7 @@ enum SpotCategory: String, CaseIterable, Identifiable, Codable {
     case shopping = "Shopping"
     case sights = "Sights & Landmarks"
     case activities = "Activities"
+    case hospitality = "Hospitality"
     case other = "Other"
 
     var id: String { self.rawValue }
@@ -185,9 +215,10 @@ enum SpotCategory: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .food: return "fork.knife"
         case .nature: return "leaf.fill"
-        case .shopping: return "bag.fill"
+        case .shopping: return "cart.fill"
         case .sights: return "camera.fill"
         case .activities: return "figure.walk"
+        case .hospitality: return "bed.double.fill"
         case .other: return "mappin.and.ellipse"
         }
     }
@@ -200,7 +231,8 @@ enum SpotCategory: String, CaseIterable, Identifiable, Codable {
         case .shopping: return "purple"
         case .sights: return "blue"
         case .activities: return "red"
-        case .other: return "gray"
+        case .hospitality: return "teal"
+        case .other: return "indigo"
         }
     }
 }

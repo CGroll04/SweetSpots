@@ -238,6 +238,7 @@ struct MainTabView: View {
     private func performUserSessionSetup(userId: String) {
         print("MainTabView: Performing setup for user UID: \(userId).")
         spotsViewModel.listenForSpots(userId: userId)
+        spotsViewModel.purgeExpiredSpots(for: userId)
         collectionViewModel.fetchCollections(userId: userId)
         
         // The `.onChange(of: launchAction)` now handles this automatically.
@@ -300,7 +301,6 @@ struct MainTabView: View {
     private func handleLocationAuthorizationChange(oldValue: CLAuthorizationStatus, newValue: CLAuthorizationStatus) {
         print("MainTabView: Location authorization changed from \(LocationManager.string(for: oldValue)) to \(LocationManager.string(for: newValue))")
         
-        // ✅ THE FIX IS HERE: This is the "Immediate Upgrade" logic.
         // If the user just granted "When In Use" for the first time,
         // immediately ask them to upgrade to "Always".
         if oldValue == .notDetermined && newValue == .authorizedWhenInUse {

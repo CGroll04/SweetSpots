@@ -232,9 +232,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
             object: nil,
             userInfo: ["deviceToken": deviceToken, "tokenString": tokenString]
         )
-        
-        // TODO: If you add Firebase Messaging later, set the token here:
-        // Messaging.messaging().apnsToken = deviceToken
     }
 
     func application(_ application: UIApplication,

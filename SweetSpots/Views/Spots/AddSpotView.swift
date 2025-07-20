@@ -40,20 +40,18 @@ class SpotFormState: ObservableObject, Identifiable {
     @Published var searchCompleterVM = SearchCompleterViewModel()
     
     private var originalSpot: Spot? // To track changes in edit mode
-    private var cancellables = Set<AnyCancellable>() // 👈 2. Add a place to store the subscription
-
+    private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Initializers
     init() {
         // Creates a blank form for "Add New Manual" mode.
-        setupSearchCompleterSubscription() // 👈 4. Call the new setup method
-
+        setupSearchCompleterSubscription()
     }
 
     init(sourceURL: String, collectionId: String? = nil) {
         self.spotSourceURLInput = sourceURL
         self.selectedCollectionId = collectionId
-        setupSearchCompleterSubscription() // 👈 4. Call the new setup method
+        setupSearchCompleterSubscription()
 
     }
     
@@ -124,9 +122,30 @@ class SpotFormState: ObservableObject, Identifiable {
         if !notificationRadiusForThisSpot.isApproximately(original.notificationRadiusMeters) { return true }
         return false
     }
+    var validationErrors: [String] {
+        var errors: [String] = []
+        if !isValidSpotName { errors.append("Spot Name is required.") }
+        if !isValidAddress { errors.append("A valid Address is required.") }
+        if selectedCategory == nil { errors.append("A Category is required.") }
+        if !hasChanges && originalSpot != nil { errors.append("No changes have been made.") }
+        // You can add more checks for other fields if you like
+        return errors
+    }
 
     var isFormValidAndReadyToSave: Bool {
-        isValidSpotName && isValidAddress && selectedCategory != nil && isValidSourceURL && isValidPhoneNumber && isValidWebsiteURL && isValidCustomRadius && hasChanges
+        // Check the main required fields first
+        let hasRequiredFields = isValidSpotName && isValidAddress && selectedCategory != nil
+        
+        // Check all optional fields
+        let hasValidOptionalFields = isValidSourceURL && isValidPhoneNumber && isValidWebsiteURL && isValidCustomRadius
+        
+        // In edit mode, we also require that there are changes
+        if originalSpot != nil { // This implies edit mode
+            return hasRequiredFields && hasValidOptionalFields && hasChanges
+        }
+        
+        // In add mode, we don't require changes (it's all new)
+        return hasRequiredFields && hasValidOptionalFields
     }
     
     // MARK: - Model Conversion
@@ -243,6 +262,7 @@ struct AddSpotView: View {
 
     // MARK: - Body
     var body: some View {
+        let _ = print("✅ ADDSPOTVIEW: Body re-evaluated. Can save: \(canSaveAll)")
         NavigationView {
             VStack(spacing: 0) {
                 // The main container for our new dynamic form list
@@ -287,25 +307,19 @@ struct AddSpotView: View {
         Form {
             // Step 4: Use a ForEach loop to create a SpotFormSectionView for each state object.
             ForEach(spotForms) { formState in
-                let formId = formState.id // Capture the ID for the closures
                 SpotFormSectionView(
-                    formState: formState,
-                    index: spotForms.firstIndex(where: { $0.id == formId }) ?? 0,
-                    onRemove: { if spotForms.count > 1 { spotForms.removeAll(where: { $0.id == formId }) } },
-                    // 👇 Pass the new closures here 👇
-                    onFieldFocused: {
-                        handleFocus(on: formId)
+                    formState: formState, // Pass the object directly
+                    onUpdate: { updatedFormState in // It now receives the state
+                         // Find the form in the array and update it to force a @State change
+                         if let index = self.spotForms.firstIndex(where: { $0.id == updatedFormState.id }) {
+                             self.spotForms[index] = updatedFormState
+                         }
                     },
-                    onFieldBlurred: {
-                        // We can decide if we want to do anything when focus is lost.
-                        // For now, we don't need to, but the hook is here.
-                    }
+                    index: spotForms.firstIndex(where: { $0.id == formState.id }) ?? 0,
+                    onRemove: { if spotForms.count > 1 { spotForms.removeAll(where: { $0.id == formState.id }) } },
+                    onFieldFocused: { handleFocus(on: formState.id) },
+                    onFieldBlurred: {}
                 )
-                .onReceive(formState.objectWillChange) { _ in
-                    // When any @Published property in formState changes,
-                    // this will trigger, forcing the AddSpotView to refresh.
-                    self.viewUpdater = UUID()
-                }
             }
 
             // Step 5: Add the "Add Another Spot" button, visible only in the correct mode.
@@ -357,25 +371,45 @@ struct AddSpotView: View {
     
     @ViewBuilder
     private func saveAllButtonSection() -> some View {
-        Section {
-            Button(action: handleSave) {
-                HStack {
-                    Spacer()
-                    if isProcessing {
-                        ProgressView().tint(Color.themeButtonText)
-                        Text(mode == .edit ? "Updating..." : "Saving...").padding(.leading, 8)
-                    } else {
-                        let title = (mode == .addFromShare && spotForms.count > 1) ? "Save All \(spotForms.count) Spots" : (mode == .edit ? "Update SweetSpot" : "Save SweetSpot")
-                        Text(title)
+        // Use 'if let' instead of 'guard let'
+        if let firstForm = spotForms.first {
+            // The Section and all its content now go INSIDE the 'if' block
+            Section {
+                Button(action: handleSave) {
+                    HStack {
+                        Spacer()
+                        if isProcessing {
+                            ProgressView().tint(Color.themeButtonText)
+                            Text(mode == .edit ? "Updating..." : "Saving...").padding(.leading, 8)
+                        } else {
+                            let title = (mode == .addFromShare && spotForms.count > 1) ? "Save All \(spotForms.count) Spots" : (mode == .edit ? "Update SweetSpot" : "Save SweetSpot")
+                            Text(title)
+                        }
+                        Spacer()
                     }
-                    Spacer()
+                    .padding(.vertical, 6)
                 }
-                .padding(.vertical, 6)
+                .disabled(!canSaveAll)
+                .listRowBackground(canSaveAll ? Color.themePrimary : Color.themePrimary.opacity(0.6))
+                .foregroundStyle(Color.themeButtonText)
+                .fontWeight(.semibold)
+
+                if !canSaveAll && !isProcessing {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(firstForm.validationErrors, id: \.self) { error in
+                            HStack(spacing: 4) {
+                                Image(systemName: "xmark.circle.fill")
+                                Text(error)
+                            }
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .padding(.vertical, 8)
+                    .transition(.opacity)
+                    .animation(.easeInOut, value: canSaveAll)
+                }
             }
-            .disabled(!canSaveAll)
-            .listRowBackground(canSaveAll ? Color.themePrimary : Color.themePrimary.opacity(0.6))
-            .foregroundStyle(Color.themeButtonText)
-            .fontWeight(.semibold)
         }
     }
 
@@ -564,6 +598,7 @@ struct AddSpotView: View {
 /// This view represents one collapsible section in the list. It binds to a `SpotFormState` object.
 struct SpotFormSectionView: View {
     @ObservedObject var formState: SpotFormState // 👈 Use @ObservedObject here
+    var onUpdate: (SpotFormState) -> Void
     let index: Int
     let onRemove: () -> Void
     var onFieldFocused: () -> Void // <-- NEW: Called when a field gets focus
@@ -611,6 +646,17 @@ struct SpotFormSectionView: View {
             if newValue != nil { onFieldFocused() }
             else if oldValue != nil && newValue == nil { onFieldBlurred() }
         }
+        .onChange(of: formState.spotName) { _, newValue in
+            print("➡️ SPOTFORMSECTIONVIEW: spotName changed to '\(newValue)'. Calling onUpdate.") // 👈 ADD THIS LINE
+            onUpdate(formState) }
+        .onChange(of: formState.spotAddress) { _, newValue in
+            print("➡️ SPOTFORMSECTIONVIEW: spotAddress changed. Calling onUpdate.") // 👈 ADD THIS LINE
+
+            onUpdate(formState) }
+        .onChange(of: formState.selectedCategory) { _, newValue in
+            print("➡️ SPOTFORMSECTIONVIEW: selectedCategory changed. Calling onUpdate.") // 👈 ADD THIS LINE
+
+            onUpdate(formState) }
     }
     
     // The label for the DisclosureGroup, including the name and remove button.
@@ -649,6 +695,7 @@ struct SpotFormSectionView: View {
         // --- Main Details ---
         ThemedTextField(title: "Spot Name*", text: $formState.spotName, systemImage: "pencil.line")
             .focused($focusedField, equals: .name)
+            .textInputAutocapitalization(.words)
         if !formState.spotName.isEmpty && !formState.isValidSpotName {
             Text("Spot name max 100 characters.").font(.caption).foregroundColor(.themeError)
         }
@@ -750,10 +797,8 @@ struct SpotFormSectionView: View {
                 }) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.secondary)
-                        // 👇 FIX 1: Give the button a reliable, large tap target.
                         // 44x44 is Apple's recommended minimum for touch targets.
                         .frame(width: 44, height: 44)
-                        // 👇 FIX 2: Tell SwiftUI the entire rectangular frame is tappable.
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -835,6 +880,7 @@ struct SpotFormSectionView: View {
                                 if formState.spotWebsiteURLInput.isEmpty { formState.spotWebsiteURLInput = details.websiteURL?.absoluteString ?? "" }
                                 
                                 formState.searchCompleterVM.searchState = .selected
+                                formState.objectWillChange.send()
                             }
                         } catch {
                             // 4. On failure, update the state to show an error message to the user
@@ -914,7 +960,10 @@ struct SpotFormSectionView: View {
         Picker("Collection", selection: $pickerSelection) {
             Text("No Collection").tag(AnyHashable(NoCollectionAction()))
             ForEach(collectionViewModel.collections) { collection in
-                Text(collection.name).tag(AnyHashable(collection.id))
+                // Safely unwrap the optional ID to ensure the tag type is always String
+                if let collectionId = collection.id {
+                    Text(collection.name).tag(AnyHashable(collectionId))
+                }
             }
             Divider()
             Label("Add New Collection...", systemImage: "plus.circle.fill")

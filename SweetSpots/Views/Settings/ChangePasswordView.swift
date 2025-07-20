@@ -107,7 +107,6 @@ struct ChangePasswordView: View {
         })
     }
     
-    // ✅ FINAL FIX: Use Task/await without try/catch, and inspect the ViewModel's state after the call.
     private func handleChangePassword() {
         guard canSubmit else { return }
         

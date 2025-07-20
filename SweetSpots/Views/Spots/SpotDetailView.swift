@@ -33,6 +33,7 @@ fileprivate struct SpotDetailAlertInfo: Identifiable {
 struct SpotDetailView: View {
     // MARK: - Environment & State
     @EnvironmentObject private var spotsViewModel: SpotViewModel
+    @EnvironmentObject private var collectionViewModel: CollectionViewModel // ADD THIS LINE
     @EnvironmentObject private var locationManager: LocationManager
     @EnvironmentObject private var navigationViewModel: NavigationViewModel
     @AppStorage("globalGeofencingEnabled") private var globalGeofencingSystemEnabled: Bool = true
@@ -65,7 +66,6 @@ struct SpotDetailView: View {
     
     // MARK: - Body
     var body: some View {
-        // ✅ FIX: The main body now safely unwraps the optional `spot`.
         // If the spot exists, we show our content.
         if let currentSpot = spot {
             contentView(for: currentSpot)
@@ -78,7 +78,6 @@ struct SpotDetailView: View {
                 .onAppear {
                     initializeLocalState(from: currentSpot)
                 }
-                // ✅ FIX: The `.onChange` now correctly observes the optional `spot`.
                 .onChange(of: spot) { _, newSpotData in
                     if let newSpot = newSpotData {
                         initializeLocalState(from: newSpot)
@@ -194,7 +193,6 @@ struct SpotDetailView: View {
             }
             .padding(.top, 8)
             ZStack {
-                // THE FIX IS HERE:
                 WebView(
                     webView: webViewStore.webView, // Pass the persistent webView from the store
                     request: URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad),
@@ -228,6 +226,15 @@ struct SpotDetailView: View {
         VStack(alignment: .leading, spacing: 16) {
             DetailRow(iconName: "mappin.and.ellipse", title: "Address", content: spot.address)
             DetailRow(iconName: spot.category.systemImageName, title: "Category", content: spot.category.displayName, contentColor: Color.themePrimary)
+            // ADDED: Display the collection if the spot belongs to one
+            if let collectionId = spot.collectionId,
+               let collection = collectionViewModel.collections.first(where: { $0.id == collectionId }) {
+                DetailRow(iconName: "tray.fill", title: "Collection", content: collection.name, contentColor: Color.themePrimary)
+            }
+            
+            // ADDED: Display the visit count
+            DetailRow(iconName: "checkmark.circle.fill", title: "Times Visited", content: "\(spot.visitCount)")
+
             if let phone = spot.phoneNumber, !phone.isEmpty {
                 DetailRow(iconName: "phone.fill", title: "Phone") {
                     if let telURL = URL(string: "tel:\(phone.filter("0123456789+".contains))") {

@@ -184,15 +184,12 @@ class NavigationViewModel: ObservableObject {
             return
         }
 
-        // FIX #1: Use the correct formatter for time
         self.remainingTravelTime = timeFormatter.string(from: route.expectedTravelTime) ?? ""
 
-        // FIX #2: Use the correct argument label 'fromDistance:'
         self.remainingDistance = distanceFormatter.string(fromDistance: route.distance)
         self.arrivalTime = "Arrive: \(dateFormatter.string(from: Date().addingTimeInterval(route.expectedTravelTime)))"
         
         if let distance = distanceToNextStep {
-            // FIX #3: Use the correct argument label 'fromDistance:' here too
             self.nextStepInstruction = "\(distanceFormatter.string(fromDistance: distance)): \(currentStep.instructions)"
         } else {
             self.nextStepInstruction = currentStep.instructions
