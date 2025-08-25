@@ -58,28 +58,53 @@ struct MainTabView: View {
         
         configureTabBarAppearance()
     }
-    // MARK: - Body
+    
     var body: some View {
         GeometryReader { geometry in
-            TabView(selection: $selectedTab) {
-                spotListTab()
-                mapTab()
-                settingsTab()
+            // The body is now clean and simple
+            dataModifiers(for: tabViewContent)
+            presentationModifiers(for: tabViewContent)
+        }
+        .animation(.easeInOut(duration: 0.2), value: selectedTab)
+        .onChange(of: selectedTab) { oldValue, newValue in
+            // The Map tab is at index 1
+            // If we are moving AWAY from the map tab...
+            if oldValue == 1 && newValue != 1 {
+                // ...and if navigation is currently active...
+                if navigationViewModel.isNavigating {
+                    // ...tell the navigation view model to stop.
+                    navigationViewModel.stopNavigation()
+                }
             }
-            .accentColor(Color.themePrimary)
-            // Inject all owned VMs into the environment for child views
-            .environmentObject(locationManager)
-            .environmentObject(spotsViewModel)
-            .environmentObject(collectionViewModel)
-            .environmentObject(navigationViewModel)
+        }
+    }
+    
+    private var tabViewContent: some View {
+        TabView(selection: $selectedTab) {
+            spotListTab()
+            mapTab()
+            settingsTab()
+        }
+        .accentColor(Color.themePrimary)
+        .environmentObject(locationManager)
+        .environmentObject(spotsViewModel)
+        .environmentObject(collectionViewModel)
+        .environmentObject(navigationViewModel)
+    }
+    
+    @ViewBuilder
+    private func dataModifiers(for content: some View) -> some View {
+        content
             .onAppear(perform: handleOnAppear)
             .onChange(of: authViewModel.userSession) { oldValue, newValue in
                 handleUserSessionChange(oldValue: oldValue, newValue: newValue)
             }
             .onReceive(NotificationCenter.default.publisher(for: .handlePendingSharedURL)) { _ in checkAndHandlePendingSharedURL() }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification), perform: handleAppWillEnterForeground)
-            .onChange(of: navigationViewModel.isNavigating) { _, isNavigating in
-                if isNavigating { selectedTab = 1 }
+            .onChange(of: navigationViewModel.navigationState) { _, newState in
+                if case .selectingRoute = newState {
+                    selectedTab = 1 // Switch to the Map tab
+                }
             }
             .onChange(of: spotsViewModel.spots) { oldValue, newValue in
                 handleSpotsChange(oldValue: oldValue, newValue: newValue)
@@ -92,10 +117,14 @@ struct MainTabView: View {
             }
             .onChange(of: launchManager.launchAction) { _, newAction in
                 if newAction != nil {
-                    // This is triggered when launchAction is set by a notification tap.
-                    // The alert will then pick it up.
                 }
             }
+    }
+
+    // Helper 2b: Applies presentation modifiers
+    @ViewBuilder
+    private func presentationModifiers(for content: some View) -> some View {
+        content
             .alert("SweetSpot Nearby!", isPresented: .constant(launchManager.launchAction != nil), presenting: launchManager.launchAction) { action in
                 if case .navigateToSpotID(let spotId) = action,
                    let spot = spotsViewModel.spots.first(where: { $0.id == spotId }) {
@@ -103,7 +132,7 @@ struct MainTabView: View {
                     Button("Navigate Now") {
                         guard let userLocation = locationManager.userLocation else { return }
                         Task {
-                            await navigationViewModel.startNavigation(to: spot, from: userLocation, transportType: .automobile)
+                            await navigationViewModel.setNavigationTarget(spot: spot, from: userLocation)
                         }
                         self.launchManager.launchAction = nil
                     }
@@ -129,8 +158,6 @@ struct MainTabView: View {
                     .environmentObject(collectionViewModel)
                     .environmentObject(navigationViewModel)
             }
-        }
-        .animation(.easeInOut(duration: 0.2), value: selectedTab)
     }
     
     // MARK: - UI Components & Tab Definitions
@@ -141,7 +168,7 @@ struct MainTabView: View {
             AddSpotView(isPresented: sheetBinding(), spotToEdit: nil, prefilledURL: url)
         case .spotDetail(let spot):
             // Initialize the detail view with the ID from the spot object
-            SpotDetailView(spotId: spot.id ?? "")
+            SpotDetailView(spotId: spot.id ?? "", presentedFrom: .map)
         }
     }
     

@@ -78,7 +78,7 @@ class CollectionViewModel: ObservableObject {
         collectionsListenerRegistration = userCollectionsRef(userId: userId)
             .order(by: "createdAt", descending: true)
             .addSnapshotListener { [weak self] querySnapshot, error in
-                // ✅ IMPROVEMENT: Ensure UI updates on main thread
+                
                 Task { @MainActor [weak self] in
                     guard let self = self else { return }
                     defer { self.isLoading = false }
@@ -333,8 +333,6 @@ class CollectionViewModel: ObservableObject {
         print("CollectionViewModel: Detached collections listener.")
     }
     
-    // ✅ NEW: Helper methods for better code organization
-    
     /// Checks if a collection name is a duplicate for the given user
     private func isDuplicateCollectionName(_ name: String, for userId: String, excluding excludeId: String? = nil) -> Bool {
         return collections.contains { collection in
@@ -358,8 +356,6 @@ class CollectionViewModel: ObservableObject {
     func getSpotCount(for collectionId: String, from spotsViewModel: SpotViewModel) -> Int {
         return spotsViewModel.spots.filter { $0.collectionId == collectionId }.count
     }
-    
-    // ✅ NEW: Validation helpers
     
     /// Validates collection name
     func isValidCollectionName(_ name: String) -> Bool {

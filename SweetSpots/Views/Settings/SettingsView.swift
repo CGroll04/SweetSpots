@@ -105,7 +105,6 @@ struct SettingsView: View {
             Text("This master switch enables or disables all proximity alerts. Individual spot alert settings are respected when this is on.")
                 .font(.caption).foregroundStyle(.secondary)
 
-            // ✅ IMPROVEMENT: Show current permission status
             currentPermissionStatusView()
 
             if let appSettingsURL = URL(string: UIApplication.openSettingsURLString) {
@@ -117,7 +116,6 @@ struct SettingsView: View {
         }
     }
 
-    // ✅ NEW: Show current permission status
     @ViewBuilder
     private func currentPermissionStatusView() -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -165,7 +163,6 @@ struct SettingsView: View {
     private func aboutSection() -> some View {
         Section(header: Text("About")) {
             LabeledContent("App Version", value: currentAppVersion())
-            // ✅ IMPROVEMENT: Add debug info for development
             #if DEBUG
             LabeledContent("Active Geofences", value: "\(locationManager.activeGeofenceIDs.count)")
             LabeledContent("Total Spots", value: "\(spotsViewModel.spots.count)")
@@ -185,7 +182,6 @@ struct SettingsView: View {
     @ViewBuilder
     private func bulkSpotAlertsSection() -> some View {
         Section(header: Text("Individual Spot Alerts")) {
-            // ✅ IMPROVEMENT: Show current status
             let spotsWithAlerts = spotsViewModel.spots.filter { $0.wantsNearbyNotification }.count
             let totalSpots = spotsViewModel.spots.count
             
@@ -297,7 +293,6 @@ struct SettingsView: View {
         return true
     }
 
-    // ✅ IMPROVED: Better bulk update with proper async handling
     private func performBulkSpotNotificationUpdate(enable: Bool) {
         guard self.authViewModel.userSession != nil else { return }
         

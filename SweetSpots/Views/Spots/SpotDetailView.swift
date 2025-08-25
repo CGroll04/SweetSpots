@@ -23,6 +23,11 @@ enum TransportType: String, CaseIterable, Hashable {
     }
 }
 
+enum PresentationContext {
+    case list
+    case map
+}
+
 // Helper struct for alerts within this view
 fileprivate struct SpotDetailAlertInfo: Identifiable {
     let id = UUID()
@@ -39,12 +44,19 @@ struct SpotDetailView: View {
     @AppStorage("globalGeofencingEnabled") private var globalGeofencingSystemEnabled: Bool = true
     @Environment(\.dismiss) private var dismiss
     
-    // ✅ The ID is the new "source of truth" for this view.
     let spotId: String
+    let presentedFrom: PresentationContext
 
-    // ✅ This computed property ALWAYS reads the LATEST data from the ViewModel.
     private var spot: Spot? {
-        spotsViewModel.spots.first { $0.id == spotId }
+        // First, search in the active spots...
+        if let activeSpot = spotsViewModel.spots.first(where: { $0.id == spotId }) {
+            return activeSpot
+        }
+        // If not found, search in the recently deleted spots.
+        if let deletedSpot = spotsViewModel.recentlyDeletedSpots.first(where: { $0.id == spotId }) {
+            return deletedSpot
+        }
+        return nil
     }
     
     // Local state for UI controls, initialized from the spot
@@ -53,11 +65,14 @@ struct SpotDetailView: View {
     @State private var selectedRadiusPreset: AddSpotView.RadiusPreset = .medium
     @State private var showingCustomRadiusField: Bool = false
     
+    @State private var spotToEdit: Spot? = nil
+    @State private var spotToDelete: Spot? = nil
+    @State private var showingDeleteConfirmation = false
+    
     // UI state
     @State private var isSavingChanges: Bool = false
     @State private var showSaveConfirmation: Bool = false
     @State private var alertInfo: SpotDetailAlertInfo? = nil
-    @State private var selectedTransportType: TransportType = .driving
 
     // WebView State
     @StateObject private var webViewStore = WebViewStore()
@@ -103,19 +118,45 @@ struct SpotDetailView: View {
         private func contentView(for spot: Spot) -> some View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    deletedStateBanner(for: spot)
                     headerSection(for: spot)
                     mapPreviewSection(for: spot)
                     if let sourceURLString = spot.sourceURL, let url = URL(string: sourceURLString) {
                         webPreviewSection(url: url)
                     }
                     informationSection(for: spot)
-                    notificationSettingsSection(for: spot)
-                    actionsSection(for: spot)
+                    if spot.deletedAt == nil {
+                        notificationSettingsSection(for: spot)
+                        actionsSection(for: spot)
+                    }
                     Spacer()
                 }
                 .padding()
             }
             .background(Color.themeBackground.ignoresSafeArea())
+            .sheet(item: $spotToEdit) { spot in
+                AddSpotView(isPresented: .constant(true), spotToEdit: spot, prefilledURL: nil)
+                    // Remember to pass all necessary environment objects
+                    .environmentObject(spotsViewModel)
+                    .environmentObject(collectionViewModel)
+                    .environmentObject(locationManager)
+                    .environmentObject(navigationViewModel)
+            }
+            .alert(
+                "Delete SweetSpot",
+                isPresented: $showingDeleteConfirmation,
+                presenting: spotToDelete
+            ) { spot in
+                Button("Delete", role: .destructive) {
+                    spotsViewModel.deleteSpot(spot) { _ in
+                        // After deleting, dismiss the detail view
+                        self.dismiss()
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { spot in
+                Text("This will move \"\(spot.name)\" to the Recently Deleted section, where it will be permanently deleted after 30 days.")
+            }
         }
 
         // MARK: - Computed Properties
@@ -129,6 +170,15 @@ struct SpotDetailView: View {
         // MARK: - Toolbar & Actions
         @ToolbarContentBuilder
         private func toolbarContent(for spot: Spot) -> some ToolbarContent {
+            if spot.deletedAt != nil {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .tint(Color.themeAccent)
+                }
+            }
+            
             ToolbarItem(placement: .navigationBarTrailing) {
                 if hasNotificationChanges(for: spot) {
                     Button("Save") {
@@ -144,6 +194,31 @@ struct SpotDetailView: View {
                                 showSaveConfirmation = false
                             }
                         }
+                }
+            }
+            
+            if spot.deletedAt == nil {
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    ActionsMenuView(
+                        spot: spot,
+                        onEdit: {
+                            self.spotToEdit = spot
+                        },
+                        onDelete: {
+                            self.spotToDelete = spot
+                            self.showingDeleteConfirmation = true
+                        },
+                        onIncrement: {
+                            spotsViewModel.incrementVisitCount(for: spot)
+                        },
+                        onDecrement: {
+                            spotsViewModel.decrementVisitCount(for: spot)
+                        },
+                        onReset: {
+                            spotsViewModel.resetVisitCount(for: spot)
+                        }
+                    )
                 }
             }
         }
@@ -166,9 +241,13 @@ struct SpotDetailView: View {
 
     private func mapPreviewSection(for spot: Spot) -> some View {
         let previewRegion = MKCoordinateRegion(center: spot.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01))
-        let nearbySpots = spotsViewModel.spots.filter { otherSpot in
-            guard otherSpot.id != spot.id else { return false }
-            return CLLocation(latitude: spot.latitude, longitude: spot.longitude).distance(from: CLLocation(latitude: otherSpot.latitude, longitude: otherSpot.longitude)) <= 1000
+        
+        var nearbySpots: [Spot] = []
+        if spot.deletedAt == nil {
+            nearbySpots = spotsViewModel.spots.filter { otherSpot in
+                guard otherSpot.id != spot.id else { return false }
+                return CLLocation(latitude: spot.latitude, longitude: spot.longitude).distance(from: CLLocation(latitude: otherSpot.latitude, longitude: otherSpot.longitude)) <= 1000
+            }
         }
         
         return Map(initialPosition: .region(previewRegion), interactionModes: [.pan, .zoom]) {
@@ -199,7 +278,7 @@ struct SpotDetailView: View {
                     isLoading: $webViewIsLoading,
                     loadingError: $webViewError
                 )
-                .frame(height: 350)
+                .frame(height: 650)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.themeFieldBorder.opacity(0.4), lineWidth: 1))
                 
@@ -269,14 +348,6 @@ struct SpotDetailView: View {
     
     private func actionsSection(for spot: Spot) -> some View {
         VStack(spacing: 16) {
-            // 3. UPDATE THE PICKER
-            Picker("Transport Type", selection: $selectedTransportType) {
-                ForEach(TransportType.allCases, id: \.self) { type in
-                    Text(type.rawValue).tag(type)
-                }
-            }
-            .pickerStyle(.segmented)
-            
             Button(action: { getDirections(for: spot) }) {
                 Label("Get Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
                     .fontWeight(.medium).frame(maxWidth: .infinity)
@@ -333,6 +404,50 @@ struct SpotDetailView: View {
         }
     }
     
+    @ViewBuilder
+    private func deletedStateBanner(for spot: Spot) -> some View {
+        // Only show this banner if the spot is soft-deleted
+        if spot.deletedAt != nil {
+            VStack(spacing: 8) {
+                Text("This spot is in Recently Deleted.")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                
+                HStack {
+                    // RESTORE BUTTON
+                    Button {
+                        spotsViewModel.restoreSpot(spot)
+                        dismiss() // Close the detail view after restoring
+                    } label: {
+                        Label("Restore Spot", systemImage: "arrow.uturn.backward.circle.fill")
+                            .fontWeight(.semibold)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.green)
+                    
+                    // DELETE PERMANENTLY BUTTON
+                    Button(role: .destructive) {
+                        spotsViewModel.permanentlyDeleteSpot(spot)
+                        dismiss() // Close the detail view after deleting
+                    } label: {
+                        Label("Delete Permanently", systemImage: "trash.fill")
+                            .fontWeight(.semibold)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .padding()
+            .background(.yellow.opacity(0.15))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(.yellow.opacity(0.5), lineWidth: 1)
+            }
+        }
+    }
+    
     // MARK: - Action Methods
     
     private func getDirections(for spot: Spot) {
@@ -342,15 +457,14 @@ struct SpotDetailView: View {
             return
         }
         
-        Task {
-            await navigationViewModel.startNavigation(
-                to: spot,
-                from: userLocation,
-                // 4. USE THE HELPER TO CONVERT BACK
-                transportType: selectedTransportType.mkType
-            )
+        if presentedFrom == .map {
             dismiss()
         }
+        
+        Task {
+            await navigationViewModel.setNavigationTarget(spot: spot, from: userLocation)
+        }
+        
     }
     
     private func saveNotificationSettings(for spot: Spot) {

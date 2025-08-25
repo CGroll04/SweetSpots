@@ -8,7 +8,6 @@
 import Foundation
 import FirebaseFirestore
 
-// ✅ NEW: Added documentation comments
 /// Represents a user-defined collection of spots.
 struct SpotCollection: Identifiable, Codable, Hashable {
     
@@ -24,12 +23,12 @@ struct SpotCollection: Identifiable, Codable, Hashable {
     /// An optional, user-provided description for the collection.
     var descriptionText: String?
     
-    // ✅ CHANGED: Removed the client-side initial value.
+    
     // It will be nil until set by the Firestore server.
     /// The server-side timestamp of when the collection was created.
     @ServerTimestamp var createdAt: Timestamp?
 
-    // ✅ CHANGED: Corrected initializer
+    
     init(
         id: String? = nil,
         userId: String,
@@ -43,7 +42,7 @@ struct SpotCollection: Identifiable, Codable, Hashable {
         // `createdAt` is no longer assigned here.
     }
     
-    // ✅ NEW: Validation helper to ensure data integrity.
+    
     /// A Boolean value indicating whether the collection has valid, non-empty essential data.
     var hasValidData: Bool {
         // Ensure name and userId are not just whitespace.

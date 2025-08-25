@@ -18,7 +18,6 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
     var longitude: CLLocationDegrees
     var sourceURL: String?              // Optional URL for the original post/source
     var category: SpotCategory
-    // ✅ ADD THIS NEW PROPERTY
     var notes: String?
     
     @ServerTimestamp var createdAt: Timestamp?
@@ -46,25 +45,23 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
-    // ✅ IMPROVEMENT: Enhanced equality check
     static func == (lhs: Spot, rhs: Spot) -> Bool {
-        // If both have IDs, compare by ID
-        if let lhsId = lhs.id, let rhsId = rhs.id {
-            return lhsId == rhsId
-        }
-        // If neither has ID (both are new), compare by content
-        if lhs.id == nil && rhs.id == nil {
-            return lhs.userId == rhs.userId &&
-                   lhs.name == rhs.name &&
-                   lhs.address == rhs.address &&
-                   abs(lhs.latitude - rhs.latitude) < 0.000001 &&
-                   abs(lhs.longitude - rhs.longitude) < 0.000001
-        }
-        // If one has ID and other doesn't, they're different
-        return false
+        // Two spots are considered equal if all of their user-editable data is the same.
+        // The ID and creation date are ignored here, as we are checking for content changes.
+        return lhs.name == rhs.name &&
+            lhs.address == rhs.address &&
+            lhs.latitude == rhs.latitude &&
+            lhs.longitude == rhs.longitude &&
+            lhs.sourceURL == rhs.sourceURL &&
+            lhs.category == rhs.category &&
+            lhs.notes == rhs.notes &&
+            lhs.phoneNumber == rhs.phoneNumber &&
+            lhs.websiteURL == rhs.websiteURL &&
+            lhs.collectionId == rhs.collectionId &&
+            lhs.wantsNearbyNotification == rhs.wantsNearbyNotification &&
+            lhs.notificationRadiusMeters.isApproximately(rhs.notificationRadiusMeters)
     }
 
-    // ✅ IMPROVEMENT: Better hash implementation
     func hash(into hasher: inout Hasher) {
         if let id = id {
             hasher.combine(id)
@@ -98,7 +95,6 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
             case deletedAt
         }
 
-    // ✅ CLEANED UP: Removed trailing whitespace
     init(
         id: String? = nil,
         userId: String,
@@ -132,11 +128,9 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         self.notes = notes
         self.deletedAt = deletedAt
         
-        // ✅ IMPROVEMENT: Validate and clamp radius to valid range
         self.notificationRadiusMeters = notificationRadiusMeters
     }
     
-    // ✅ NEW: Validation helpers
     var isValidCoordinate: Bool {
         latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
     }
@@ -153,13 +147,11 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         isValidNotificationRadius
     }
     
-    // ✅ NEW: Distance helper
     func distance(from location: CLLocation) -> CLLocationDistance {
         let spotLocation = CLLocation(latitude: latitude, longitude: longitude)
         return location.distance(from: spotLocation)
     }
     
-    // ✅ NEW: URL validation helpers
     var hasValidSourceURL: Bool {
         guard let urlString = sourceURL?.trimmingCharacters(in: .whitespacesAndNewlines),
               !urlString.isEmpty else { return true } // nil or empty is valid
@@ -223,7 +215,6 @@ enum SpotCategory: String, CaseIterable, Identifiable, Codable {
         }
     }
     
-    // ✅ NEW: Helper for color coding categories if needed
     var associatedColor: String {
         switch self {
         case .food: return "orange"

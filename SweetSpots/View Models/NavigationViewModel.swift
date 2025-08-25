@@ -5,12 +5,50 @@
 //  Created by Charlie Groll on 2025-07-03.
 //
 
+import SwiftUI
 import Foundation
 import MapKit
 import Combine
 
 @MainActor
 class NavigationViewModel: ObservableObject {
+    
+    struct RouteInfo {
+        let spot: Spot
+        let route: MKRoute
+        var expectedTravelTime: String {
+            let formatter = DateComponentsFormatter()
+            formatter.unitsStyle = .abbreviated
+            formatter.allowedUnits = [.hour, .minute]
+            return formatter.string(from: route.expectedTravelTime) ?? ""
+        }
+    }
+
+    enum NavigationState: Equatable {
+        static func == (lhs: NavigationViewModel.NavigationState, rhs: NavigationViewModel.NavigationState) -> Bool {
+            switch (lhs, rhs) {
+            case (.idle, .idle): return true
+            case (.selectingRoute(let lhsInfo), .selectingRoute(let rhsInfo)): return lhsInfo.spot.id == rhsInfo.spot.id && lhsInfo.route == rhsInfo.route
+            default: return false
+            }
+        }
+        
+        case idle
+        case selectingRoute(info: RouteInfo)
+    }
+    
+    @Published var navigationState: NavigationState = .idle
+    @Published var selectedTransportType: TransportType = .driving {
+        didSet {
+            // Re-fetch the route when the transport type changes
+            if case .selectingRoute(let info) = navigationState, let userLocation = locationManager.userLocation {
+                Task {
+                    await setNavigationTarget(spot: info.spot, from: userLocation)
+                }
+            }
+        }
+    }
+    
     // MARK: - Published Properties for UI and State
     
     // State Flags
@@ -63,50 +101,54 @@ class NavigationViewModel: ObservableObject {
     // MARK: - Public Control Functions
     
     /// The primary entry point for starting navigation.
-    func startNavigation(to destination: Spot, from userLocation: CLLocation, transportType: MKDirectionsTransportType) async {
-        // 1. Set initial state: We are now in the "calculating" phase
-        isCalculatingRoute = true
-        isNavigating = false // Not yet navigating, just calculating
-        self.destinationSpot = destination
-        self.route = nil
-        self.routeCalculationError = nil
-        
-        // 2. Build and perform the directions request
+    func setNavigationTarget(spot: Spot, from userLocation: CLLocation) async {
         let request = MKDirections.Request()
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: userLocation.coordinate))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: destination.coordinate))
-        request.transportType = transportType
-        
-        let directions = MKDirections(request: request)
-        
-        do {
-            let response = try await directions.calculate()
-            isCalculatingRoute = false // Finished calculating
-            
-            guard let calculatedRoute = response.routes.first else {
-                self.routeCalculationError = "No valid routes found."
-                return
-            }
-            
-            // 3. Success! Transition to the "navigating" state
-            self.route = calculatedRoute
-            self.routeSteps = calculatedRoute.steps.filter { !$0.instructions.isEmpty }
-            self.currentStepIndex = 0
-            self.currentStep = routeSteps.first
-            self.isNavigating = true // <<-- THIS IS THE KEY TRANSITION
-            
-            print("NavigationViewModel: Route calculated. Starting turn-by-turn.")
-            updateUIStringsForCurrentState()
+        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: spot.coordinate))
+        request.transportType = selectedTransportType.mkType
 
-        } catch {
-            isCalculatingRoute = false
-            let nsError = error as NSError
-            if nsError.code == MKError.directionsNotFound.rawValue {
-                self.routeCalculationError = "Directions to this location could not be found."
+        let directions = MKDirections(request: request)
+        do {
+            if let routeResponse = try? await directions.calculate() {
+                if let route = routeResponse.routes.first {
+                    let info = RouteInfo(spot: spot, route: route)
+                    self.navigationState = .selectingRoute(info: info)
+                } else {
+                    // Handle the case where a response was received but had no routes
+                    print("Error: No routes found.")
+                    self.navigationState = .idle
+                }
             } else {
-                self.routeCalculationError = "Route Error: \(error.localizedDescription)"
+                // Handle the case where calculate() returned nil
+                print("Error: Route calculation returned nil.")
+                self.navigationState = .idle
             }
-            print("NavigationViewModel: Error calculating directions - \(error.localizedDescription)")
+        }
+    }
+
+    // 3. CREATE A FUNCTION TO START THE ACTUAL NAVIGATION
+    func beginActualNavigation() {
+        // 1. Make sure we have a route selected
+        guard case .selectingRoute(let info) = navigationState else { return }
+
+        print("NavigationViewModel: Starting in-app navigation.")
+
+        // 2. Set up all the state properties for turn-by-turn mode
+        self.route = info.route
+        self.destinationSpot = info.spot
+        self.routeSteps = info.route.steps.filter { !$0.instructions.isEmpty }
+        self.currentStepIndex = 0
+        self.currentStep = self.routeSteps.first
+        self.isNavigating = true // This shows the turn-by-turn UI
+        self.isCalculatingRoute = false
+        self.routeCalculationError = nil
+
+        // 3. Update the UI text for the first step
+        updateUIStringsForCurrentState()
+
+        // 4. Hide the route selection card
+        withAnimation {
+            self.navigationState = .idle
         }
     }
     
@@ -122,6 +164,13 @@ class NavigationViewModel: ObservableObject {
         self.routeSteps = []
         self.currentStepIndex = 0
     }
+    
+    func cancelRouteSelection() {
+        print("NavigationViewModel: Route selection cancelled.")
+        withAnimation {
+            self.navigationState = .idle
+        }
+    }
 
     // MARK: - Core Navigation Logic (The Live Engine)
     
@@ -133,9 +182,9 @@ class NavigationViewModel: ObservableObject {
         if !isUser(userLocation, on: currentStep.polyline, within: rerouteThreshold) {
             print("NavigationViewModel: User is off-route. Requesting recalculation.")
             Task {
-                if let destination = self.destinationSpot, let transportType = self.route?.transportType {
+                if let destination = self.destinationSpot, let _ = self.route?.transportType {
                     // Automatically recalculate with the same parameters
-                    await self.startNavigation(to: destination, from: userLocation, transportType: transportType)
+                    await self.setNavigationTarget(spot: destination, from: userLocation)
                 }
             }
             return // Stop processing this update; wait for the new route

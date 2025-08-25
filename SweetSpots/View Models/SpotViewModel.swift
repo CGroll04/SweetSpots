@@ -108,7 +108,6 @@ class SpotViewModel: ObservableObject {
                         completion(.failure(error))
                     } else {
                         if let docId = newDocumentRef?.documentID {
-                            // ✅ IMPROVEMENT: Let the Firestore listener handle the update instead of optimistic update
                             // This prevents potential race conditions and ensures consistency
                             print("SpotViewModel: Spot '\(spotToAdd.name)' added successfully. ID: \(docId). Firestore listener will update the local array.")
                             
@@ -126,6 +125,27 @@ class SpotViewModel: ObservableObject {
             self.isLoading = false
             self.errorMessage = "Error preparing spot data for save: \(error.localizedDescription)"
             completion(.failure(error))
+        }
+    }
+    
+    func addSpots(_ spotIDs: Set<String>, toCollection collectionID: String) {
+        guard let userId = spots.first?.userId, !spotIDs.isEmpty else { return }
+        
+        let batch = db.batch()
+        let spotsRef = userSpotsCollection(userId: userId)
+        
+        for id in spotIDs {
+            let docRef = spotsRef.document(id)
+            batch.updateData(["collectionId": collectionID], forDocument: docRef)
+        }
+        
+        batch.commit { error in
+            if let error = error {
+                print("ERROR: Batch update to add spots to collection failed: \(error.localizedDescription)")
+                self.errorMessage = "Could not add spots to the new collection."
+            } else {
+                print("SUCCESS: Batch updated \(spotIDs.count) spots to new collection.")
+            }
         }
     }
     
@@ -170,7 +190,37 @@ class SpotViewModel: ObservableObject {
             }
         }
     }
+    
+    // In SpotViewModel.swift
 
+    func removeSpotsFromCollection(_ spotIDs: Set<String>) {
+        // 1. Find the spots in your local array that match the IDs.
+        let spotsToUpdate = self.spots.filter { spotIDs.contains($0.id ?? "") }
+
+        // 2. Loop through them to update Firestore and the local copy.
+        for var spot in spotsToUpdate {
+            spot.collectionId = nil // Set the collectionId to nil to orphan the spot
+
+            // 3. Update the spot in Firestore using the existing completion handler method.
+            //    We are NOT using async/await here because the function isn't defined that way.
+            updateSpot(spot) { result in
+                // This completion block is called after the update finishes.
+                // You can handle success or failure for each individual spot here.
+                switch result {
+                case .success:
+                    print("Successfully updated spot \(spot.id ?? "") to remove from collection.")
+                case .failure(let error):
+                    print("Failed to update spot \(spot.id ?? ""): \(error.localizedDescription)")
+                }
+            }
+
+            // 4. Update the local array to reflect the change immediately in the UI.
+            if let index = self.spots.firstIndex(where: { $0.id == spot.id }) {
+                self.spots[index] = spot
+            }
+        }
+    }
+    
     func updateSpot(_ spotToUpdate: Spot, completion: @escaping (Result<Void, Error>) -> Void) {
         guard let spotId = spotToUpdate.id else {
             completion(.failure(SpotError.missingSpotID))
@@ -255,6 +305,7 @@ class SpotViewModel: ObservableObject {
             .document(spotId)
             .delete()
     }
+    
 
     func purgeExpiredSpots(for userId: String) {
         // Calculate the date 30 days ago from now.
@@ -290,7 +341,6 @@ class SpotViewModel: ObservableObject {
     
     // MARK: - Helper Methods
     
-    /// ✅ NEW: Compare two spot arrays to detect actual changes
     private func spotsAreEqual(_ spots1: [Spot], _ spots2: [Spot]) -> Bool {
         guard spots1.count == spots2.count else { return false }
         
@@ -306,7 +356,6 @@ class SpotViewModel: ObservableObject {
         return true
     }
     
-    /// ✅ NEW: Compare two individual spots
     private func spotsAreEqual(_ spot1: Spot, _ spot2: Spot) -> Bool {
         return spot1.id == spot2.id &&
                spot1.name == spot2.name &&
@@ -324,67 +373,28 @@ class SpotViewModel: ObservableObject {
                spot1.createdAt?.dateValue() == spot2.createdAt?.dateValue()
     }
     
-    /// ✅ NEW: Get a specific spot by ID (useful for other views)
     func getSpot(withId spotId: String) -> Spot? {
         return spots.first { $0.id == spotId }
     }
     
     func incrementVisitCount(for spot: Spot) {
-        guard let spotId = spot.id else {
-            print("SpotViewModel: Cannot increment visitCount – spot has no ID.")
-            return
-        }
-
-        let currentCount = spot.visitCount
-        let newCount = currentCount + 1
-
-        userSpotsCollection(userId: spot.userId)
-            .document(spotId)
-            .updateData(["visitCount": newCount]) { [weak self] error in
-                Task { @MainActor in
-                    guard let self = self else { return }
-
-                    if let error = error {
-                        print("SpotViewModel: Failed to increment visitCount for '\(spot.name)': \(error.localizedDescription)")
-                        self.errorMessage = "Could not update visit count."
-                    } else {
-                        print("SpotViewModel: visitCount for '\(spot.name)' incremented to \(newCount).")
-                        if let index = self.spots.firstIndex(where: { $0.id == spotId }) {
-                            var updatedSpot = self.spots[index]
-                            updatedSpot.visitCount = newCount
-                            self.spots[index] = updatedSpot
-                        }
-                    }
-                }
-            }
-    }
-    
-    func decrementVisitCount(for spot: Spot) {
         guard let spotId = spot.id else { return }
-        guard spot.visitCount > 0 else { return }
-
-        // Suppress override from Firestore
-        suppressedUndoSpotIds.insert(spotId)
-
+        
+        // This atomically adds 1 to the value on the server.
+        // We no longer change the local `spots` array here.
         userSpotsCollection(userId: spot.userId)
             .document(spotId)
-            .updateData(["visitCount": FieldValue.increment(Int64(-1))]) { [weak self] error in
-                Task { @MainActor in
-                    guard let self = self else { return }
-                    self.suppressedUndoSpotIds.remove(spotId) // auto-clear after write
+            .updateData(["visitCount": FieldValue.increment(Int64(1))])
+    }
 
-                    if let error = error {
-                        self.errorMessage = "Could not update visit count."
-                        print("SpotViewModel: Failed to decrement visitCount for '\(spot.name)': \(error.localizedDescription)")
-                    } else {
-                        // Optimistic UI update
-                        if let index = self.spots.firstIndex(where: { $0.id == spotId }) {
-                            self.spots[index].visitCount -= 1
-                        }
-                        print("SpotViewModel: visitCount for '\(spot.name)' decremented.")
-                    }
-                }
-            }
+    func decrementVisitCount(for spot: Spot) {
+        guard let spotId = spot.id, spot.visitCount > 0 else { return }
+        
+        // This atomically subtracts 1 from the value on the server.
+        // We no longer change the local `spots` array here.
+        userSpotsCollection(userId: spot.userId)
+            .document(spotId)
+            .updateData(["visitCount": FieldValue.increment(Int64(-1))])
     }
     
     func resetVisitCount(for spot: Spot) {
@@ -419,7 +429,6 @@ class SpotViewModel: ObservableObject {
                 }
             }
     }
-    /// ✅ NEW: Force refresh from Firestore (useful for debugging)
     func forceRefresh(userId: String) {
         print("SpotViewModel: Force refresh requested")
         stopListeningAndClearData()

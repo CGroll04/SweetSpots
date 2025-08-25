@@ -15,6 +15,7 @@ struct MapView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
     @EnvironmentObject private var navigationViewModel: NavigationViewModel
+    
 
     // MARK: - State Variables
     @State private var showingAddSheet: Bool = false // 1. ADD THIS STATE
@@ -33,7 +34,6 @@ struct MapView: View {
     @State private var selectedCategoryFilters: Set<SpotCategory> = []
     @State private var initialCameraHasBeenSet = false
     
-    // ✅ ADDED: Geofencing display options
     @State private var showGeofenceRadii: Bool = false
     @AppStorage("globalGeofencingEnabled") private var globalGeofencingEnabled: Bool = true
     
@@ -46,7 +46,6 @@ struct MapView: View {
         }
     }
     
-    // ✅ ADDED: Spots with active geofences
     private var spotsWithGeofences: [Spot] {
         spotsForMap.filter { $0.wantsNearbyNotification && globalGeofencingEnabled }
     }
@@ -71,9 +70,12 @@ struct MapView: View {
     // MARK: - Body
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .top) { // Use ZStack to overlay navigation UI
+            ZStack(alignment: .bottom) { // Use ZStack to overlay navigation UI
                 // mapViewWithOverlays should have NO modifiers here
                 mapViewWithOverlays
+
+                RouteSelectionView(navigationViewModel: navigationViewModel)
+
                 
                 geofenceClarityOverlay()
             
@@ -108,7 +110,6 @@ struct MapView: View {
             .onChange(of: locationManager.userLocation, handleLocationChange)
             .onChange(of: selectedSpot, handleSpotSelection)
             .onChange(of: navigationViewModel.route, handleRouteChange)
-            // ✅ ADD THIS MODIFIER
             .onChange(of: navigationViewModel.isNavigating) { _, isNavigating in
                 if isNavigating, let userLocation = locationManager.userLocation {
                     // When navigation starts, immediately snap the camera to the user's location in navigation mode.
@@ -222,15 +223,12 @@ struct MapView: View {
                 }
             }
         }
-        .onMapCameraChange(frequency: .onEnd) { context in
-                self.viewingRegion = context.region
-            }
     }
     
     // Chain modifiers onto the core map view. This breaks up the expression.
     private var mapViewWithOverlays: some View {
         coreMapView
-            .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .excludingAll, showsTraffic: false))
+            .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .all, showsTraffic: false))
             .mapControls { MapPitchToggle(); MapCompass() }
             .overlay(alignment: .bottomTrailing) {
                 MapZoomControls(
@@ -257,7 +255,7 @@ struct MapView: View {
             }
             .sheet(item: $selectedSpot) { spot in
                 // We now initialize SpotDetailView with the ID from the selected spot.
-                SpotDetailView(spotId: spot.id ?? "")
+                SpotDetailView(spotId: spot.id ?? "", presentedFrom: .map)
                     .environmentObject(authViewModel)
                     .environmentObject(spotsViewModel)
                     .environmentObject(locationManager)
@@ -265,9 +263,12 @@ struct MapView: View {
                     .environmentObject(navigationViewModel)
                     .presentationDetents([.medium, .large])
             }
+            .onMapCameraChange(frequency: .onEnd) { context in
+                self.viewingRegion = context.region
+            }
+            .ignoresSafeArea() // Ignores safe area for the map only
     }
     
-    // ✅ ADDED: Geofence toggle button
     private func geofenceToggleButton() -> some View {
         Button {
             withAnimation {
@@ -283,7 +284,6 @@ struct MapView: View {
         }
     }
     
-    // ✅ ADDED: Geofence status overlay
     private func geofenceStatusOverlay() -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -477,6 +477,67 @@ struct MapView: View {
             }
         }
     }
+    
+    struct RouteSelectionView: View {
+        @ObservedObject var navigationViewModel: NavigationViewModel
+        
+        var body: some View {
+            if case .selectingRoute(let routeInfo) = navigationViewModel.navigationState {
+                VStack(spacing: 0) {
+                    // Route Details
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(routeInfo.spot.name)
+                                .font(.headline)
+                            Text("Travel time: \(routeInfo.expectedTravelTime)")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        
+                        Button(action: {
+                            navigationViewModel.cancelRouteSelection()
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title2)
+                                .foregroundStyle(.gray, Color.gray.opacity(0.2))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding()
+                    
+                    Divider()
+
+                    // Transport Type Picker
+                    Picker("Transport Type", selection: $navigationViewModel.selectedTransportType) {
+                        ForEach(TransportType.allCases, id: \.self) { type in
+                            Text(type.rawValue).tag(type)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding()
+
+                    // Start Navigation Button
+                    Button(action: {
+                        navigationViewModel.beginActualNavigation()
+                    }) {
+                        Label("Start Navigation", systemImage: "arrow.triangle.turn.up.right.circle.fill")
+                            .fontWeight(.bold)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(.green)
+                    .padding([.horizontal, .bottom])
+                }
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .shadow(radius: 5)
+                .padding()
+                .transition(.move(edge: .bottom))
+            }
+        }
+    }
 }
 
 // MARK: - Enhanced Supporting Views
@@ -615,7 +676,6 @@ private struct MapZoomControls: View {
     }
 
     private func zoom(by factor: Double) {
-        // ✅ This now works because currentRegion is always kept up-to-date.
         guard var region = currentRegion else { return }
         
         region.span.latitudeDelta *= factor

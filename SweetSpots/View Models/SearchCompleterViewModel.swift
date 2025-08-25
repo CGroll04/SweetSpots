@@ -93,7 +93,7 @@ class SearchCompleterViewModel: NSObject, ObservableObject {
         }
         
         return PlaceDetails(
-            name: mapItem.name ?? completion.title, // 👈 2. Get the name from the map item
+            name: mapItem.name ?? completion.title,
             fullAddress: formatAddress(from: mapItem),
             coordinates: mapItem.placemark.coordinate,
             phoneNumber: mapItem.phoneNumber,

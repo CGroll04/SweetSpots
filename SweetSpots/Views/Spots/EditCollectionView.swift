@@ -96,12 +96,12 @@ struct EditCollectionView: View {
                             titleVisibility: .visible
                         ) {
                             // Option 1: Delete everything (destructive)
-                            Button("Delete Collection & All Spots", role: .destructive) {
+                            Button("Delete Collection & Spots", role: .destructive) {
                                 deleteCollection(mode: .collectionAndSpots)
                             }
                             
                             // Option 2: Delete collection only
-                            Button("Delete Collection Only (Remove Spots from collection)") {
+                            Button("Remove Collection)") {
                                 deleteCollection(mode: .collectionOnly)
                             }
                             
@@ -177,19 +177,5 @@ struct EditCollectionView: View {
                 alertInfo = EditCollectionAlertInfo(title: "Update Failed", message: error.localizedDescription)
             }
         }
-    }
-}
-
-#Preview {
-    let mockCollection = SpotCollection(
-        userId: "user123",
-        name: "Sample Collection",
-        descriptionText: "This is a sample collection for preview"
-    )
-    
-    return NavigationView {
-        EditCollectionView(collection: mockCollection)
-            .environmentObject(CollectionViewModel())
-            .environmentObject(SpotViewModel())
     }
 }

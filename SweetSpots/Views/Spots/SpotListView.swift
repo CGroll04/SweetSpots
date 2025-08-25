@@ -30,7 +30,8 @@ struct SpotListView: View {
     @State private var selectedCategoryFilters: Set<SpotCategory> = []
     @State private var currentSortOrder: SortOrder = .distanceAscending
     @State private var selectedCollectionFilterId: String? = nil
-    @State private var showOnlyUncollected: Bool = false
+    @State private var showingFilterPopover: Bool = false
+    @State private var collectionFilterState: CollectionFilterState = .all
     
     // State to control side menu presentation
     @State private var showingSideMenu: Bool = false
@@ -67,15 +68,30 @@ struct SpotListView: View {
         case notVisited
         case visited
     }
+    
+    enum CollectionFilterState: String, CaseIterable {
+        case all = "All Spots"
+        case inCollection = "In Collections"
+        case notInCollection = "Not in a Collection"
+    }
 
     private var displayedSpots: [Spot] {
         var workingSpots = spotsViewModel.spots
 
-        if showOnlyUncollected {
-            workingSpots = workingSpots.filter { $0.collectionId == nil }
-        } else if let collectionId = selectedCollectionFilterId {
+        if let collectionId = selectedCollectionFilterId {
             workingSpots = workingSpots.filter { $0.collectionId == collectionId }
+        } else {
+            // This is for the new popover filter.
+            switch collectionFilterState {
+            case .all:
+                break // Do nothing, show all spots
+            case .inCollection:
+                workingSpots = workingSpots.filter { $0.collectionId != nil }
+            case .notInCollection:
+                workingSpots = workingSpots.filter { $0.collectionId == nil }
+            }
         }
+        
         
         if !selectedCategoryFilters.isEmpty {
             workingSpots = workingSpots.filter { selectedCategoryFilters.contains($0.category) }
@@ -142,8 +158,7 @@ struct SpotListView: View {
                 .toolbar { navigationToolbarItems() }
                 .searchable(text: $searchText, prompt: "Search spots...")
                 .navigationDestination(for: Spot.self) { spot in
-                    // ✅ STEP 2: PASS THE ENVIRONMENT OBJECTS
-                    SpotDetailView(spotId: spot.id ?? "")
+                    SpotDetailView(spotId: spot.id ?? "", presentedFrom: .list)
                         .environmentObject(spotsViewModel)
                         .environmentObject(locationManager)
                         .environmentObject(navigationViewModel)
@@ -172,7 +187,6 @@ struct SpotListView: View {
                 .sheet(isPresented: $showingSideMenu) {
                     SideMenuView(
                         selectedCollectionFilterId: $selectedCollectionFilterId,
-                        showOnlyUncollected: $showOnlyUncollected,
                         onDismiss: { showingSideMenu = false }
                     )
                     .environmentObject(collectionViewModel)
@@ -203,7 +217,7 @@ struct SpotListView: View {
                 }
             } message: { spot in
                 // The confirmation message
-                Text("Are you sure you want to permanently delete \"\(spot.name)\"? This action cannot be undone.")
+                Text("This will move \"\(spot.name)\" to the Recently Deleted section, where it will be permanently deleted after 30 days.")
             }
         
             .onAppear {
@@ -398,7 +412,19 @@ struct SpotListView: View {
         }
         ToolbarItemGroup(placement: .navigationBarTrailing) {
             sortMenu()
-            categoryFilterMenuForList()
+            Button {
+                showingFilterPopover = true
+            } label: {
+                let isFilterActive = collectionFilterState != .all || !selectedCategoryFilters.isEmpty
+                Label("Filter", systemImage: isFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    .foregroundStyle(Color.themePrimary)
+            }
+            .popover(isPresented: $showingFilterPopover) {
+                FilterMenuView(
+                    collectionFilterState: $collectionFilterState,
+                    selectedCategoryFilters: $selectedCategoryFilters
+                )
+            }
             Button {
                 showingAddSheet = true
             } label: {
@@ -504,7 +530,6 @@ struct SpotListView: View {
         syncGeofencesIfReady()
     }
 
-    // ✅ REMOVED: updateDisplayedSpots() method since we're using computed property
 
     // MARK: - Action Handlers & Dynamic UI
     private func editSpot(_ spot: Spot) {
@@ -525,38 +550,63 @@ struct SpotListView: View {
         self.spotToDelete = spot
         self.showingDeleteConfirmation = true
     }
-
+    
     private var currentNavigationTitle: String {
-        if showOnlyUncollected { return "Uncollected" }
-        if let id = selectedCollectionFilterId, let coll = collectionViewModel.collections.first(where: { $0.id == id }) { return coll.name }
-        return "My SweetSpots"
+        // 1. If a specific collection is selected from the side menu, use its name.
+        if let id = selectedCollectionFilterId, let coll = collectionViewModel.collections.first(where: { $0.id == id }) {
+            return coll.name
+        }
+        
+        // 2. Otherwise, use the state from our new filter popover.
+        switch collectionFilterState {
+        case .all:
+            return "My SweetSpots" // Default title
+        case .inCollection:
+            return "In Collections"
+        case .notInCollection:
+            return "Not in a Collection"
+        }
     }
     
     private func emptyStateDescriptionForFilters() -> String {
-        if !searchText.isEmpty { return "No spots match your search. Try different keywords or clear filters." }
-        if showOnlyUncollected { return "You have no spots that aren't in a collection." }
-        if selectedCollectionFilterId != nil { return "This collection is empty. Add some spots to it!" }
-        if !selectedCategoryFilters.isEmpty { return "No spots match your selected categories. Try different ones or clear filters!"}
+        if !searchText.isEmpty {
+            return "No spots match your search. Try different keywords or clear filters."
+        }
+        // Check for side menu filter first
+        if selectedCollectionFilterId != nil {
+            return "This collection is empty. Add some spots to it!"
+        }
+        
+        // Now check the new popover filter state
+        switch collectionFilterState {
+        case .inCollection:
+            return "None of your spots are in a collection."
+        case .notInCollection:
+            return "All of your spots are currently in a collection."
+        case .all:
+            // If it's ".all", we fall through to the category check
+            break
+        }
+        
+        if !selectedCategoryFilters.isEmpty {
+            return "No spots match your selected categories. Try different ones or clear filters!"
+        }
+        
         return "No spots match the current filters."
     }
 
     // MARK: - Menus
-    private func categoryFilterMenuForList() -> some View {
-        Menu {
-            if !SpotCategory.allCases.isEmpty {
-                categoryFilterButtons()
-            } else {
-                Text("No Categories Available")
-            }
-        } label: {
-            Label("Filter", systemImage: selectedCategoryFilters.isEmpty ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
-                .foregroundStyle(Color.themePrimary)
-        }
-    }
 
     @ViewBuilder private func categoryFilterButtons() -> some View {
         Button(action: { selectedCategoryFilters.removeAll() }) {
-            Label("All Categories", systemImage: selectedCategoryFilters.isEmpty ? "checkmark.circle.fill" : "circle")
+            Label {
+                // This is the text part of the label
+                Text("All Categories")
+            } icon: {
+                // This is the icon part, which we can now modify
+                Image(systemName: selectedCategoryFilters.isEmpty ? "checkmark.circle.fill" : "circle")
+                    .font(.callout)
+            }
         }
         Divider()
         ForEach(SpotCategory.allCases) { category in
@@ -610,11 +660,20 @@ struct SpotCardView: View {
 
                 // Main Content
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(spot.name)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Color.themeTextPrimary)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(spot.name)
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(Color.themeTextPrimary)
+                            .lineLimit(1)
+                        
+                        // This icon will only appear if notifications are on for this spot
+                        if spot.wantsNearbyNotification {
+                            Image(systemName: "bell.fill")
+                                .font(.caption) // Makes the icon slightly smaller than the text
+                                .foregroundStyle(Color.themeAccent) // Use your app's accent color
+                        }
+                    }
 
                     HStack(spacing: 6) {
                         if let display = locationDisplay {
@@ -640,8 +699,16 @@ struct SpotCardView: View {
                 Spacer()
 
                 // Actions Menu
-                actionsMenu()
-                    .padding(.trailing, 6)
+                ActionsMenuView(
+                    spot: spot,
+                    onEdit: onEdit,
+                    onDelete: onDelete,
+                    onIncrement: onIncrement,
+                    onDecrement: onDecrement,
+                    onReset: onReset
+                )
+                .padding(.trailing, 6)
+                
 
                 // Chevron
                 Image(systemName: "chevron.right")
@@ -739,7 +806,7 @@ struct SpotCardView: View {
         }
         
         // Fallback if geocoding fails
-        return (icon: "map.fill", text: "A faraway place")
+        return (icon: "map.fill", text: "Location loading...")
     }
     
     private func formatDistance(_ distanceInMeters: CLLocationDistance) -> String {
@@ -776,57 +843,6 @@ struct SpotCardView: View {
         case "teal": return .teal
         case "indigo": return .indigo
         default: return .blue
-        }
-    }
-    
-    @ViewBuilder
-    private func actionsMenu() -> some View {
-        Menu {
-            // This is the new "Add Visit" button
-            Button {
-                onIncrement()
-            } label: {
-                Label("Add Visit", systemImage: "plus")
-            }
-
-            // Section for visit management
-            if spot.visitCount > 0 {
-                Divider()
-                
-                Button {
-                    onDecrement()
-                } label: {
-                    Label("Remove Visit", systemImage: "minus")
-                }
-                
-                Button(role: .destructive) {
-                    onReset()
-                } label: {
-                    Label("Reset Visits", systemImage: "arrow.counterclockwise")
-                }
-            }
-            
-            // Section for editing and deleting
-            Divider()
-            
-            Button {
-                onEdit()
-            } label: {
-                Label("Edit Spot", systemImage: "pencil")
-            }
-            
-            Button(role: .destructive) {
-                onDelete()
-            } label: {
-                Label("Delete Spot", systemImage: "trash")
-            }
-            
-        } label: {
-            Image(systemName: "ellipsis.circle.fill")
-                .font(.title2)
-                .foregroundStyle(.gray.opacity(0.8))
-                .frame(width: 44, height: 44) // Make the tap area larger
-                .contentShape(Rectangle())
         }
     }
 }
