@@ -16,7 +16,7 @@ class LocationManager: NSObject, ObservableObject {
     private static let monitoredSpotDetailsKey = "monitoredSpotDetailsKey"
     private static let recentNotificationsKey = "recentNotificationsKey"
     private static let maxGeofences = 20
-    private static let notificationCooldownMinutes: TimeInterval = 30 * 60 // 30 minutes
+    private static let notificationCooldownMinutes: TimeInterval = 120 * 60 // 30 minutes
     private static let significantLocationChangeThreshold: CLLocationDistance = 1000 // 1km
     
     // MARK: - Published Properties

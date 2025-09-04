@@ -13,29 +13,24 @@ import UserNotifications
 struct SweetSpotsApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var authViewModel = AuthViewModel()
-    
+
+    @StateObject private var navigationCoordinator = NavigationCoordinator()
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(authViewModel)
-                .onOpenURL { incomingURL in
-                    handleIncomingURL(incomingURL)
-                }
-        }
-    }
-
-    private func handleIncomingURL(_ url: URL) {
-        guard url.scheme == "sweetspotsapp", url.host == "addSpot" else {
-            return
-        }
-        
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        
-        if let sourceURLString = components?.queryItems?.first(where: { $0.name == "sourceURL" })?.value,
-           let decodedURLString = sourceURLString.removingPercentEncoding {
+                .environmentObject(navigationCoordinator)
             
-            UserDefaults.standard.set(decodedURLString, forKey: AppConstants.pendingSharedURLKey)
-            NotificationCenter.default.post(name: .handlePendingSharedURL, object: nil)
+                .onOpenURL { incomingURL in
+                    DeepLinkRouter.handle(url: incomingURL, navigation: navigationCoordinator)
+                }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    guard let url = activity.webpageURL else {
+                        return
+                    }
+                    DeepLinkRouter.handle(url: url, navigation: navigationCoordinator)
+                }
         }
     }
 }
@@ -53,11 +48,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         setupNotificationCenter()
         setupRemoteNotifications(for: application)
         
-        // Handle deep links if the app is launched via a URL
-        if let url = launchOptions?[.url] as? URL {
-            handleDeepLinkAtLaunch(url)
-        }
-        
         return true
     }
     
@@ -74,6 +64,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
     }
 
     private func handleDeepLinkAtLaunch(_ url: URL) {
+        // Support: sweetspotsapp://addSpot?sourceURL=<encoded>
         guard url.scheme == "sweetspotsapp", url.host == "addSpot" else {
             return
         }
@@ -87,8 +78,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
     
     // MARK: - Remote Notifications Setup
     private func setupRemoteNotifications(for application: UIApplication) {
-        // Request authorization only if not already requested
-        // Let LocationManager handle the permission request in context
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             switch settings.authorizationStatus {
             case .authorized:
@@ -96,10 +85,9 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
                     application.registerForRemoteNotifications()
                 }
             case .notDetermined:
-                // Don't automatically request - let the user flow handle this
+                // Let your UI flow request permission at the right moment
                 break
             case .denied, .provisional, .ephemeral:
-                // User has made a decision, respect it
                 break
             @unknown default:
                 break
@@ -109,74 +97,58 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
     
     // MARK: - App Lifecycle
     func applicationDidBecomeActive(_ application: UIApplication) {
-        // Clear badge when app becomes active
         UNUserNotificationCenter.current().setBadgeCount(0) { error in
             if let error = error {
                 print("Failed to clear badge: \(error)")
             }
         }
-        
-        // Notify other parts of the app that we're active
         NotificationCenter.default.post(name: .applicationDidBecomeActive, object: nil)
     }
     
     func applicationWillResignActive(_ application: UIApplication) {
-        // App is about to become inactive
         NotificationCenter.default.post(name: .applicationWillResignActive, object: nil)
     }
     
     func applicationDidEnterBackground(_ application: UIApplication) {
-        // App entered background
         NotificationCenter.default.post(name: .applicationDidEnterBackground, object: nil)
     }
     
     func applicationWillEnterForeground(_ application: UIApplication) {
-        // App will enter foreground
         NotificationCenter.default.post(name: .applicationWillEnterForeground, object: nil)
     }
     
     // MARK: - UNUserNotificationCenterDelegate
     func userNotificationCenter(_ center: UNUserNotificationCenter,
-                              willPresent notification: UNNotification,
-                              withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         
         let userInfo = notification.request.content.userInfo
         
-        // Check if this is a geofence notification
+        // Foreground geofence notification
         if let geofenceEvent = userInfo["geofenceEvent"] as? String,
            let spotId = userInfo["spotId"] as? String {
-            
-            // For geofence notifications in foreground, show banner and sound
-            // The LocationManager will handle in-app alerts separately
             completionHandler([.banner, .sound])
-            
-            // Post notification for other parts of app to handle
             NotificationCenter.default.post(
                 name: .geofenceTriggeredInForeground,
                 object: nil,
                 userInfo: ["spotId": spotId, "geofenceEvent": geofenceEvent]
             )
         } else {
-            // For other notifications (remote, etc.), show normally
             completionHandler([.banner, .sound, .badge])
         }
     }
     
     func userNotificationCenter(_ center: UNUserNotificationCenter,
-                              didReceive response: UNNotificationResponse,
-                              withCompletionHandler completionHandler: @escaping () -> Void) {
-        
-        _ = response.notification.request.content.userInfo
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
         
         handleNotificationTap(response)
         
-        // Update badge count
         UNUserNotificationCenter.current().setBadgeCount(0) { error in
             if let error = error {
                 print("Failed to clear badge: \(error)")
             }
         }
-        
         completionHandler()
     }
     
@@ -184,49 +156,26 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         let userInfo = response.notification.request.content.userInfo
         
         // Handle geofence notifications
-        if let spotId = userInfo["spotId"] as? String{
-            LaunchManager.shared.launchAction = .navigateToSpotID(spotId)
-            return
-        }
-        
-        // Handle regular spot notifications
         if let spotId = userInfo["spotId"] as? String {
-            NotificationCenter.default.post(
-                name: .spotNotificationTapped,
-                object: nil,
-                userInfo: ["spotId": spotId]
-            )
+            LaunchManager.shared.launchAction = .navigateToSpotID(spotId)
             return
         }
         
         // Handle test notifications or other types
         if let aps = userInfo["aps"] as? [String: AnyObject],
            let alert = aps["alert"] as? [String: AnyObject],
-           let title = alert["title"] as? String {
-            
-            if title == "Test Notification" {
-                // Handle test notification
-                NotificationCenter.default.post(
-                    name: .testNotificationTapped,
-                    object: nil,
-                    userInfo: userInfo
-                )
-            }
+           let title = alert["title"] as? String,
+           title == "Test Notification" {
+            NotificationCenter.default.post(name: .testNotificationTapped, object: nil, userInfo: userInfo)
         }
     }
 
     // MARK: - Remote Notification Registration
     func application(_ application: UIApplication,
                     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        
-        // Convert token to string for debugging/logging
         let tokenString = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
         print("APNs device token: \(tokenString)")
-        
-        // Store the token for potential future use
         UserDefaults.standard.set(tokenString, forKey: "APNSToken")
-        
-        // Post notification that device token was received
         NotificationCenter.default.post(
             name: .deviceTokenReceived,
             object: nil,
@@ -237,7 +186,6 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
     func application(_ application: UIApplication,
                     didFailToRegisterForRemoteNotificationsWithError error: Error) {
         print("Failed to register for remote notifications: \(error.localizedDescription)")
-        
         NotificationCenter.default.post(
             name: .deviceTokenRegistrationFailed,
             object: nil,
@@ -250,34 +198,23 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             switch settings.authorizationStatus {
             case .authorized:
-                DispatchQueue.main.async {
-                    completion(true)
-                }
+                DispatchQueue.main.async { completion(true) }
             case .notDetermined:
                 UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
                     if let error = error {
                         print("Notification authorization error: \(error.localizedDescription)")
                     }
-                    
                     DispatchQueue.main.async {
                         self.notificationPermissionGranted = granted
                         self.hasRequestedNotificationPermission = true
-                        
-                        if granted {
-                            UIApplication.shared.registerForRemoteNotifications()
-                        }
-                        
+                        if granted { UIApplication.shared.registerForRemoteNotifications() }
                         completion(granted)
                     }
                 }
             case .denied, .provisional, .ephemeral:
-                DispatchQueue.main.async {
-                    completion(false)
-                }
+                DispatchQueue.main.async { completion(false) }
             @unknown default:
-                DispatchQueue.main.async {
-                    completion(false)
-                }
+                DispatchQueue.main.async { completion(false) }
             }
         }
     }
@@ -296,5 +233,5 @@ extension Notification.Name {
     
     static let deviceTokenReceived = Notification.Name("deviceTokenReceived")
     static let deviceTokenRegistrationFailed = Notification.Name("deviceTokenRegistrationFailed")
-
+    
 }

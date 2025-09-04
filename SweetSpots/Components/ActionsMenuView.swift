@@ -14,6 +14,7 @@ struct ActionsMenuView: View {
     let onIncrement: () -> Void
     let onDecrement: () -> Void
     let onReset: () -> Void
+    let onShare: (() -> Void)?
 
     var body: some View {
         Menu {
@@ -52,6 +53,15 @@ struct ActionsMenuView: View {
             } label: {
                 Label("Delete Spot", systemImage: "trash")
             }
+            
+            Divider()
+            
+            if let onShare {
+                Button { onShare() } label: {
+                    Label("Share Spot", systemImage: "square.and.arrow.up")
+                }
+            }
+            
         } label: {
             Image(systemName: "ellipsis.circle.fill")
                 .font(.title2)

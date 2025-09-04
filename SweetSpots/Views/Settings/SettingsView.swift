@@ -379,19 +379,3 @@ struct ProcessingOverlayView: View {
        }
    }
 }
-
-// MARK: - Preview
-struct SettingsView_Previews: PreviewProvider {
-    static var previews: some View {
-        let authVM = AuthViewModel()
-        let spotVM = SpotViewModel()
-        let locationManager = LocationManager()
-        let collectionVM = CollectionViewModel()
-
-        return SettingsView()
-            .environmentObject(authVM)
-            .environmentObject(spotVM)
-            .environmentObject(locationManager)
-            .environmentObject(collectionVM)
-    }
-}

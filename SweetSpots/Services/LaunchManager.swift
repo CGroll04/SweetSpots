@@ -9,12 +9,17 @@ import Foundation
 import SwiftUI // Needed for ObservableObject
 
 @MainActor
-class LaunchManager: ObservableObject {
-    // The shared instance that the whole app will use.
+final class LaunchManager: ObservableObject {
     static let shared = LaunchManager()
 
-    // The action the app should perform on launch.
-    @Published var launchAction: MainTabView.LaunchAction?
-    
-    private init() {} // Private initializer to ensure it's a singleton.
+    enum LaunchAction: Equatable {
+        case navigateToSpotID(String)
+        // add more actions in future if needed
+    }
+
+    @Published var launchAction: LaunchAction?
+
+    private init() {}
+
+    func reset() { launchAction = nil }
 }

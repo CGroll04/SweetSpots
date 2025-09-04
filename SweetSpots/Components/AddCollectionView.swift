@@ -60,6 +60,7 @@ struct AddCollectionView: View {
     // Environment Objects
     @EnvironmentObject private var spotsViewModel: SpotViewModel
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
+    @EnvironmentObject private var authViewModel: AuthViewModel
     @Environment(\.dismiss) private var dismiss
     
     // State
@@ -67,8 +68,8 @@ struct AddCollectionView: View {
     @State private var collectionName: String = ""
     @State private var isProcessing = false
     
-    private var uncollectedSpots: [Spot] {
-        spotsViewModel.spots.filter { $0.collectionId == nil }
+    private var allSpots: [Spot] {
+        spotsViewModel.spots
     }
     
     private var canCreateCollection: Bool {
@@ -86,7 +87,7 @@ struct AddCollectionView: View {
                 // SECTION 2: Select Spots
                 Section(header: Text("Select Spots (\(selectedSpotIDs.count) selected)")) {
                     // Use a List for the selectable items
-                    List(uncollectedSpots) { spot in
+                    List(allSpots) { spot in
                         Button {
                             toggleSelection(for: spot)
                         } label: {
@@ -134,25 +135,25 @@ struct AddCollectionView: View {
     }
     
     private func handleCreateCollection() {
-        guard let userId = spotsViewModel.spots.first?.userId else { return }
+        // It's more robust to get the userId from the authViewModel
+        guard let userId = authViewModel.userSession?.uid else { return }
         isProcessing = true
-        
+
         Task {
             do {
                 let newCollectionId = try await collectionViewModel.addCollection(
                     name: collectionName,
                     userId: userId
                 )
-                
-                // Only add spots if any were selected
+
                 if !selectedSpotIDs.isEmpty {
-                    spotsViewModel.addSpots(selectedSpotIDs, toCollection: newCollectionId)
+                    // Use the new, correct function name
+                    spotsViewModel.addSpotsToCollection(spotIDs: selectedSpotIDs, toCollection: newCollectionId)
                 }
-                
+
                 dismiss()
             } catch {
                 isProcessing = false
-                // Handle error (e.g., show an alert)
                 print("Failed to create collection: \(error.localizedDescription)")
             }
         }

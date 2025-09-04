@@ -18,9 +18,9 @@ struct MainTabView: View {
     @StateObject private var collectionViewModel: CollectionViewModel
     @StateObject private var navigationViewModel: NavigationViewModel
     
-    @StateObject private var launchManager = LaunchManager.shared
-
+    @ObservedObject private var launchManager = LaunchManager.shared
     
+    @EnvironmentObject private var navigationCoordinator: NavigationCoordinator
     @EnvironmentObject private var authViewModel: AuthViewModel
     
     
@@ -35,48 +35,40 @@ struct MainTabView: View {
     
     enum ActiveSheet: Identifiable {
         case sharedURLAddSpot(url: URL)
-        case spotDetail(spot: Spot) // Pass the whole Spot object
+        case sharedPayloadAddSpot(payload: SharedSpotPayload) // <-- ADD THIS
+        case spotDetail(spot: Spot)
+        case sharedCollection(payload: SharedCollectionPayload)
         
         var id: String {
             switch self {
             case .sharedURLAddSpot(let url): return "sharedURLAddSpot-\(url.absoluteString)"
-            case .spotDetail(let spot): return "spotDetail-\(spot.hashValue)" // Use hashValue
+            case .sharedPayloadAddSpot(let payload): return "sharedPayloadAddSpot-\(payload.name)" // <-- ADD THIS
+            case .sharedCollection(let payload):
+                // This case should also return a unique string identifier
+                return "sharedCollection-\(payload.collectionName)"
+            case .spotDetail(let spot): return "spotDetail-\(spot.hashValue)"
             }
         }
     }
     @State private var activeSheet: ActiveSheet?
     
     // MARK: - Initialization
-    init() {
+    init(authViewModel: AuthViewModel) { // <-- Update signature to accept AuthViewModel
         // Correct initialization for interdependent StateObjects
         let locationManager = LocationManager()
-        _locationManager = StateObject(wrappedValue: locationManager)
         
-        _spotsViewModel = StateObject(wrappedValue: SpotViewModel())
-        _collectionViewModel = StateObject(wrappedValue: CollectionViewModel())
-        _navigationViewModel = StateObject(wrappedValue: NavigationViewModel(locationManager: locationManager))
+        // Create the SpotViewModel and pass the AuthViewModel to it
+        self._spotsViewModel = StateObject(wrappedValue: SpotViewModel(authViewModel: authViewModel))
+        
+        self._locationManager = StateObject(wrappedValue: locationManager)
+        self._collectionViewModel = StateObject(wrappedValue: CollectionViewModel())
+        self._navigationViewModel = StateObject(wrappedValue: NavigationViewModel(locationManager: locationManager))
         
         configureTabBarAppearance()
     }
     
     var body: some View {
-        GeometryReader { geometry in
-            // The body is now clean and simple
-            dataModifiers(for: tabViewContent)
-            presentationModifiers(for: tabViewContent)
-        }
-        .animation(.easeInOut(duration: 0.2), value: selectedTab)
-        .onChange(of: selectedTab) { oldValue, newValue in
-            // The Map tab is at index 1
-            // If we are moving AWAY from the map tab...
-            if oldValue == 1 && newValue != 1 {
-                // ...and if navigation is currently active...
-                if navigationViewModel.isNavigating {
-                    // ...tell the navigation view model to stop.
-                    navigationViewModel.stopNavigation()
-                }
-            }
-        }
+        presentationModifiers(for: dataModifiers(for: tabViewContent))
     }
     
     private var tabViewContent: some View {
@@ -84,41 +76,50 @@ struct MainTabView: View {
             spotListTab()
             mapTab()
             settingsTab()
+            }
+            .accentColor(Color.themePrimary)
+            .environmentObject(locationManager)
+            .environmentObject(spotsViewModel)
+            .environmentObject(collectionViewModel)
+            .environmentObject(navigationViewModel)
         }
-        .accentColor(Color.themePrimary)
-        .environmentObject(locationManager)
-        .environmentObject(spotsViewModel)
-        .environmentObject(collectionViewModel)
-        .environmentObject(navigationViewModel)
-    }
     
     @ViewBuilder
     private func dataModifiers(for content: some View) -> some View {
         content
-            .onAppear(perform: handleOnAppear)
-            .onChange(of: authViewModel.userSession) { oldValue, newValue in
-                handleUserSessionChange(oldValue: oldValue, newValue: newValue)
+        .onAppear(perform: handleOnAppear)
+        .onChange(of: authViewModel.userSession) { oldValue, newValue in
+            handleUserSessionChange(oldValue: oldValue, newValue: newValue)
+        }
+        .onChange(of: navigationViewModel.navigationState) { _, newState in
+            if case .selectingRoute = newState {
+                selectedTab = 1
             }
-            .onReceive(NotificationCenter.default.publisher(for: .handlePendingSharedURL)) { _ in checkAndHandlePendingSharedURL() }
-            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification), perform: handleAppWillEnterForeground)
-            .onChange(of: navigationViewModel.navigationState) { _, newState in
-                if case .selectingRoute = newState {
-                    selectedTab = 1 // Switch to the Map tab
-                }
+        }
+        .onChange(of: spotsViewModel.spots) { oldValue, newValue in
+            handleSpotsChange(oldValue: oldValue, newValue: newValue)
+        }
+        .onChange(of: globalGeofencingSystemEnabled) { oldValue, newValue in
+            handleGlobalGeofencingToggle(oldValue: oldValue, newValue: newValue)
+        }
+        .onChange(of: locationManager.authorizationStatus) { oldValue, newValue in
+            handleLocationAuthorizationChange(oldValue: oldValue, newValue: newValue)
+        }
+        .onChange(of: launchManager.launchAction) { _, _ in }
+        // This is the new, correct listener for deep links
+        .onChange(of: navigationCoordinator.incomingSharedPayload) { _, newPayload in
+            if let payload = newPayload {
+                activeSheet = .sharedPayloadAddSpot(payload: payload)
+                navigationCoordinator.incomingSharedPayload = nil
             }
-            .onChange(of: spotsViewModel.spots) { oldValue, newValue in
-                handleSpotsChange(oldValue: oldValue, newValue: newValue)
+        }
+        .onChange(of: navigationCoordinator.incomingSharedCollectionPayload) { _, newPayload in
+            if let payload = newPayload {
+                activeSheet = .sharedCollection(payload: payload)
+                navigationCoordinator.incomingSharedCollectionPayload = nil
             }
-            .onChange(of: globalGeofencingSystemEnabled) { oldValue, newValue in
-                handleGlobalGeofencingToggle(oldValue: oldValue, newValue: newValue)
-            }
-            .onChange(of: locationManager.authorizationStatus) { oldValue, newValue in
-                handleLocationAuthorizationChange(oldValue: oldValue, newValue: newValue)
-            }
-            .onChange(of: launchManager.launchAction) { _, newAction in
-                if newAction != nil {
-                }
-            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: selectedTab)
     }
 
     // Helper 2b: Applies presentation modifiers
@@ -165,9 +166,16 @@ struct MainTabView: View {
     private func sheetView(for sheetType: ActiveSheet) -> some View {
         switch sheetType {
         case .sharedURLAddSpot(let url):
-            AddSpotView(isPresented: sheetBinding(), spotToEdit: nil, prefilledURL: url)
+            // 5. Pass nil for the payload in this old case.
+            AddSpotView(isPresented: sheetBinding(), spotToEdit: nil, prefilledPayload: nil, prefilledURL: url)
+            
+        case .sharedPayloadAddSpot(let payload): // <-- ADD THIS CASE
+            // 6. Create the AddSpotView with the payload directly.
+            let contextualURL = URL(string: payload.websiteURL ?? payload.sourceURL ?? "")
+            AddSpotView(isPresented: sheetBinding(), spotToEdit: nil, prefilledPayload: payload, prefilledURL: contextualURL)
+        case .sharedCollection(let payload): // <-- ADD THIS
+            ImportCollectionView(isPresented: sheetBinding(), payload: payload)
         case .spotDetail(let spot):
-            // Initialize the detail view with the ID from the spot object
             SpotDetailView(spotId: spot.id ?? "", presentedFrom: .map)
         }
     }
@@ -235,7 +243,6 @@ struct MainTabView: View {
     
     private func handleOnAppear() {
         print("MainTabView.onAppear triggered.")
-        checkAndHandlePendingSharedURL()
         if let userId = authViewModel.userSession?.uid, !initialDataLoadAttemptedForCurrentSession {
             print("MainTabView.onAppear with existing user session (UID: \(userId)). Performing initial setup.")
             performUserSessionSetup(userId: userId)
@@ -253,6 +260,7 @@ struct MainTabView: View {
             }
             performUserSessionSetup(userId: userId)
             initialDataLoadAttemptedForCurrentSession = true
+
         }  else if oldValue != nil && newValue == nil {
             print("MainTabView: User session became nil (signed out). Clearing data and listeners.")
             spotsViewModel.stopListeningAndClearData()
@@ -268,8 +276,22 @@ struct MainTabView: View {
         spotsViewModel.purgeExpiredSpots(for: userId)
         collectionViewModel.fetchCollections(userId: userId)
         
-        // The `.onChange(of: launchAction)` now handles this automatically.
-        // We just need to load data. The rest is reactive.
+        let lastCleanupKey = "lastShareCleanupDate_\(userId)"
+        let oneDayInSeconds: TimeInterval = 24 * 60 * 60
+
+        if let lastCleanupDate = UserDefaults.standard.object(forKey: lastCleanupKey) as? Date {
+            if Date().timeIntervalSince(lastCleanupDate) > oneDayInSeconds {
+                // It's been more than a day, run cleanup
+                print("Performing daily share cleanup...")
+                spotsViewModel.performShareCleanup(for: userId)
+                UserDefaults.standard.set(Date(), forKey: lastCleanupKey)
+            }
+        } else {
+            // Never run before for this user, run cleanup
+            print("Performing first-time share cleanup...")
+            spotsViewModel.performShareCleanup(for: userId)
+            UserDefaults.standard.set(Date(), forKey: lastCleanupKey)
+        }
         
         setupLocationServices()
         Task { await attemptInitialGeofenceSync() }
@@ -346,31 +368,5 @@ struct MainTabView: View {
         // This existing logic is still correct for syncing geofences.
         guard authViewModel.userSession != nil, globalGeofencingSystemEnabled else { return }
         locationManager.synchronizeGeofences(forSpots: spotsViewModel.spots, globallyEnabled: newValue == .authorizedAlways && globalGeofencingSystemEnabled)
-    }
-
-    private func handleSpotNotificationTap(_ notification: Notification) {
-        // Step 1: Safely unwrap the spotId from the notification's user info.
-        guard let userInfo = notification.userInfo,
-              let spotId = userInfo["spotId"] as? String else {
-            // If we can't find a spotId, print an error and stop.
-            print("MainTabView: Could not handle notification tap. Spot ID was missing from the notification's userInfo.")
-            return
-        }
-        
-        // Step 2: If the guard passes, 'spotId' is a valid String.
-        // We can now use it.
-        print("MainTabView: Handling notification tap for spot ID: \(spotId). Setting launch action.")
-        
-        // This is the single trigger for the UI. It sets the state that the
-        // .onChange and .alert modifiers are watching.
-        self.launchManager.launchAction = .navigateToSpotID(spotId)
-    }
-
-    private func checkAndHandlePendingSharedURL() {
-        guard let urlString = UserDefaults.standard.string(forKey: AppConstants.pendingSharedURLKey) else { return }
-        UserDefaults.standard.removeObject(forKey: AppConstants.pendingSharedURLKey)
-        if let url = URL(string: urlString) {
-            activeSheet = .sharedURLAddSpot(url: url)
-        }
     }
 }

@@ -8,6 +8,7 @@
 import SwiftUI
 import CoreLocation // Needed for CLLocation and CLLocationCoordinate2D
 
+
 struct SpotListView: View {
     // MARK: - Environment Objects
     @EnvironmentObject private var spotsViewModel: SpotViewModel
@@ -24,6 +25,8 @@ struct SpotListView: View {
     @State private var spotToDelete: Spot? = nil
     @State private var showingDeleteConfirmation = false
     @State private var selectedTab: SpotTab = .notVisited
+    
+    @State private var itemToShare: ShareableContent? = nil
 
 
     // MARK: - Filtering & Sorting State
@@ -38,8 +41,8 @@ struct SpotListView: View {
     
     // MARK: - Geofencing State
     @State private var hasInitializedGeofences = false
-    @State private var geofencingGloballyEnabled = true
-
+    @AppStorage("globalGeofencingEnabled") private var geofencingGloballyEnabled: Bool = true
+    
     private var isShowingEditSheet: Binding<Bool> {
         Binding(
             get: { spotToEdit != nil },
@@ -78,17 +81,21 @@ struct SpotListView: View {
     private var displayedSpots: [Spot] {
         var workingSpots = spotsViewModel.spots
 
+        // --- THIS LOGIC IS NOW UPDATED FOR THE collectionIds ARRAY ---
         if let collectionId = selectedCollectionFilterId {
-            workingSpots = workingSpots.filter { $0.collectionId == collectionId }
+            // Find spots whose collectionIds array CONTAINS the selected ID
+            workingSpots = workingSpots.filter { $0.collectionIds.contains(collectionId) }
         } else {
-            // This is for the new popover filter.
+            // This logic updates the popover filter
             switch collectionFilterState {
             case .all:
-                break // Do nothing, show all spots
+                break // Do nothing
             case .inCollection:
-                workingSpots = workingSpots.filter { $0.collectionId != nil }
+                // Find spots that are in AT LEAST ONE collection
+                workingSpots = workingSpots.filter { !$0.collectionIds.isEmpty }
             case .notInCollection:
-                workingSpots = workingSpots.filter { $0.collectionId == nil }
+                // Find spots that are in NO collections
+                workingSpots = workingSpots.filter { $0.collectionIds.isEmpty }
             }
         }
         
@@ -162,9 +169,10 @@ struct SpotListView: View {
                         .environmentObject(spotsViewModel)
                         .environmentObject(locationManager)
                         .environmentObject(navigationViewModel)
+                        .environmentObject(collectionViewModel)
                 }
                 .sheet(isPresented: $showingAddSheet) {
-                   AddSpotView(isPresented: $showingAddSheet, spotToEdit: nil, prefilledURL: nil)
+                   AddSpotView(isPresented: $showingAddSheet, spotToEdit: nil,prefilledPayload: nil, prefilledURL: nil)
                        .environmentObject(spotsViewModel)
                        .environmentObject(authViewModel)
                        .environmentObject(locationManager)
@@ -176,7 +184,7 @@ struct SpotListView: View {
                 }) {
                     if let spot = spotToEdit {
                         // This sheet also needs the environment objects
-                        AddSpotView(isPresented: isShowingEditSheet, spotToEdit: spot, prefilledURL: nil)
+                        AddSpotView(isPresented: isShowingEditSheet, spotToEdit: spot,prefilledPayload: nil, prefilledURL: nil)
                             .environmentObject(spotsViewModel)
                             .environmentObject(authViewModel)
                             .environmentObject(locationManager)
@@ -194,6 +202,10 @@ struct SpotListView: View {
                     .environmentObject(authViewModel)
                     .environmentObject(locationManager)
                     .environmentObject(navigationViewModel)
+                }
+        
+                .sheet(item: $itemToShare) { item in
+                    ShareSheet(items: [item.text, item.url])
                 }
 
         // Stage 2: Apply lifecycle and onChange modifiers
@@ -222,7 +234,6 @@ struct SpotListView: View {
         
             .onAppear {
                 // Load geofencing setting from UserDefaults
-                geofencingGloballyEnabled = UserDefaults.standard.object(forKey: "GeofencingGloballyEnabled") as? Bool ?? true
                 initialLoadTasks()
             }
             .onChange(of: collectionViewModel.collections) {
@@ -362,7 +373,14 @@ struct SpotListView: View {
                                         selectedTab = .notVisited
                                     }
                                     spotsViewModel.resetVisitCount(for: spot)
+                                },
+                            
+                            
+                            onShare: {
+                                Task {
+                                    await handleShare(for: spot)
                                 }
+                            }
                         )
                     }
                 }
@@ -384,6 +402,30 @@ struct SpotListView: View {
                 Text("(\(count))").foregroundStyle(.secondary).font(.subheadline)
             }
             .padding(.vertical, 4)
+        }
+    }
+    
+    private func handleShare(for spot: Spot) async {
+        guard let userId = authViewModel.userSession?.uid else { return }
+
+        // You can add a @State var for a loading spinner here if desired
+
+        do {
+            let senderName = authViewModel.userSession?.displayName
+
+            let url = try await SpotShareManager.makeShareURL(
+                from: spot,
+                collectionName: nil, // We pass nil as a spot can be in many collections
+                senderName: senderName,
+                userId: userId
+            )
+
+            let text = senderName != nil ? "\(senderName!) shared '\(spot.name)' with you!" : "Check out '\(spot.name)' on SweetSpots!"
+            itemToShare = ShareableContent(text: text, url: url)
+
+        } catch {
+            print("SpotListView: Failed to create share link: \(error)")
+            // Optionally, show an error alert here
         }
     }
     
@@ -523,9 +565,6 @@ struct SpotListView: View {
     private func toggleGeofencingGlobally() {
         geofencingGloballyEnabled.toggle()
         
-        // Save to UserDefaults
-        UserDefaults.standard.set(geofencingGloballyEnabled, forKey: "GeofencingGloballyEnabled")
-        
         // Update geofences immediately
         syncGeofencesIfReady()
     }
@@ -639,6 +678,7 @@ struct SpotCardView: View {
     let onIncrement: () -> Void
     let onDecrement: () -> Void
     let onReset: () -> Void
+    let onShare: () -> Void
 
     @State private var locationDisplay: (icon: String, text: String)?
     @State private var showUndoBanner = false
@@ -705,7 +745,8 @@ struct SpotCardView: View {
                     onDelete: onDelete,
                     onIncrement: onIncrement,
                     onDecrement: onDecrement,
-                    onReset: onReset
+                    onReset: onReset,
+                    onShare: onShare
                 )
                 .padding(.trailing, 6)
                 

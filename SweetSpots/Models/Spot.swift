@@ -36,7 +36,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
             _notificationRadiusMeters = max(50.0, min(50000.0, newValue))
         }
     }
-    var collectionId: String?     // Optional: ID of the SpotCollection this spot belongs to
+    var collectionIds: [String] = [] // Replaces `collectionId: String?`
     var visitCount: Int = 0
     var deletedAt: Timestamp? = nil
 
@@ -57,21 +57,13 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
             lhs.notes == rhs.notes &&
             lhs.phoneNumber == rhs.phoneNumber &&
             lhs.websiteURL == rhs.websiteURL &&
-            lhs.collectionId == rhs.collectionId &&
+            lhs.collectionIds == rhs.collectionIds && // <-- UPDATED THIS LINE
             lhs.wantsNearbyNotification == rhs.wantsNearbyNotification &&
             lhs.notificationRadiusMeters.isApproximately(rhs.notificationRadiusMeters)
     }
 
     func hash(into hasher: inout Hasher) {
-        if let id = id {
-            hasher.combine(id)
-        } else {
-            hasher.combine(userId)
-            hasher.combine(name)
-            hasher.combine(address)
-            hasher.combine(latitude)
-            hasher.combine(longitude)
-        }
+        hasher.combine(id) // Hashing on ID is sufficient and more stable
     }
     
     private enum CodingKeys: String, CodingKey {
@@ -89,7 +81,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
             case wantsNearbyNotification
             // Map the private property to the desired key in Firestore
             case _notificationRadiusMeters = "notificationRadiusMeters"
-            case collectionId
+            case collectionIds // <-- UPDATED THIS LINE
             case notes
             case visitCount
             case deletedAt
@@ -106,7 +98,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         category: SpotCategory = .other,
         phoneNumber: String? = nil,
         websiteURL: String? = nil,
-        collectionId: String? = nil,
+        collectionIds: [String] = [], // <-- UPDATED THIS LINE
         wantsNearbyNotification: Bool = false,
         notificationRadiusMeters: Double = 200.0,
         notes: String? = nil,
@@ -123,12 +115,44 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         self.category = category
         self.phoneNumber = phoneNumber
         self.websiteURL = websiteURL
-        self.collectionId = collectionId
+        self.collectionIds = collectionIds // <-- UPDATED THIS LINE
         self.wantsNearbyNotification = wantsNearbyNotification
         self.notes = notes
         self.deletedAt = deletedAt
         
         self.notificationRadiusMeters = notificationRadiusMeters
+    }
+    
+    init(userId: String, from payload: SharedSpotPayload, collectionIds: [String]) {
+        self.id = nil
+        self.userId = userId
+        self.name = payload.name
+        self.address = payload.address
+        self.latitude = payload.latitude
+        self.longitude = payload.longitude
+        self.sourceURL = payload.sourceURL
+        self.category = payload.resolvedCategory()
+        self.phoneNumber = payload.phoneNumber
+        self.websiteURL = payload.websiteURL
+        self.collectionIds = collectionIds // <-- UPDATED THIS LINE
+        self.notes = payload.notes
+    }
+    
+    // Add this new mutating function inside Spot.swift
+    mutating func update(from payload: SharedSpotPayload, newCollectionId: String) {
+        self.name = payload.name
+        self.address = payload.address
+        self.latitude = payload.latitude
+        self.longitude = payload.longitude
+        self.sourceURL = payload.sourceURL
+        self.category = payload.resolvedCategory()
+        self.phoneNumber = payload.phoneNumber
+        self.websiteURL = payload.websiteURL
+        if !self.collectionIds.contains(newCollectionId) {
+            self.collectionIds.append(newCollectionId)
+        }
+        self.notes = payload.notes
+        // Note: We don't update visitCount or other user-specific metadata
     }
     
     var isValidCoordinate: Bool {
@@ -175,7 +199,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         category = try container.decode(SpotCategory.self, forKey: .category)
         phoneNumber = try container.decodeIfPresent(String.self, forKey: .phoneNumber)
         websiteURL = try container.decodeIfPresent(String.self, forKey: .websiteURL)
-        collectionId = try container.decodeIfPresent(String.self, forKey: .collectionId)
+        collectionIds = try container.decodeIfPresent([String].self, forKey: .collectionIds) ?? []
         wantsNearbyNotification = try container.decodeIfPresent(Bool.self, forKey: .wantsNearbyNotification) ?? false
         _notificationRadiusMeters = try container.decodeIfPresent(Double.self, forKey: ._notificationRadiusMeters) ?? 200.0
         notes = try container.decodeIfPresent(String.self, forKey: .notes)

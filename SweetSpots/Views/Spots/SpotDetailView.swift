@@ -39,6 +39,7 @@ struct SpotDetailView: View {
     // MARK: - Environment & State
     @EnvironmentObject private var spotsViewModel: SpotViewModel
     @EnvironmentObject private var collectionViewModel: CollectionViewModel // ADD THIS LINE
+    @EnvironmentObject private var authViewModel: AuthViewModel // ADD THIS LINE
     @EnvironmentObject private var locationManager: LocationManager
     @EnvironmentObject private var navigationViewModel: NavigationViewModel
     @AppStorage("globalGeofencingEnabled") private var globalGeofencingSystemEnabled: Bool = true
@@ -69,6 +70,9 @@ struct SpotDetailView: View {
     @State private var spotToDelete: Spot? = nil
     @State private var showingDeleteConfirmation = false
     
+    @State private var itemToShare: ShareableContent? = nil
+
+    
     // UI state
     @State private var isSavingChanges: Bool = false
     @State private var showSaveConfirmation: Bool = false
@@ -93,10 +97,8 @@ struct SpotDetailView: View {
                 .onAppear {
                     initializeLocalState(from: currentSpot)
                 }
-                .onChange(of: spot) { _, newSpotData in
-                    if let newSpot = newSpotData {
-                        initializeLocalState(from: newSpot)
-                    }
+                .onChange(of: spotsViewModel.spots) { _, _ in
+                    if let latest = spot { initializeLocalState(from: latest) }
                 }
         } else {
             // If the spot is nil (e.g., deleted), show a fallback view.
@@ -135,12 +137,19 @@ struct SpotDetailView: View {
             }
             .background(Color.themeBackground.ignoresSafeArea())
             .sheet(item: $spotToEdit) { spot in
-                AddSpotView(isPresented: .constant(true), spotToEdit: spot, prefilledURL: nil)
-                    // Remember to pass all necessary environment objects
-                    .environmentObject(spotsViewModel)
-                    .environmentObject(collectionViewModel)
-                    .environmentObject(locationManager)
-                    .environmentObject(navigationViewModel)
+                AddSpotView(
+                    isPresented: Binding(
+                        get: { self.spotToEdit != nil },
+                        set: { if !$0 { self.spotToEdit = nil } }
+                    ),
+                    spotToEdit: spot,
+                    prefilledPayload: nil,
+                    prefilledURL: nil
+                )
+                .environmentObject(spotsViewModel)
+                .environmentObject(collectionViewModel)
+                .environmentObject(locationManager)
+                .environmentObject(navigationViewModel)
             }
             .alert(
                 "Delete SweetSpot",
@@ -157,6 +166,9 @@ struct SpotDetailView: View {
             } message: { spot in
                 Text("This will move \"\(spot.name)\" to the Recently Deleted section, where it will be permanently deleted after 30 days.")
             }
+            .sheet(item: $itemToShare) { item in
+                ShareSheet(items: [item.text, item.url])
+            }
         }
 
         // MARK: - Computed Properties
@@ -168,60 +180,86 @@ struct SpotDetailView: View {
         }
         
         // MARK: - Toolbar & Actions
-        @ToolbarContentBuilder
-        private func toolbarContent(for spot: Spot) -> some ToolbarContent {
-            if spot.deletedAt != nil {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                    .tint(Color.themeAccent)
-                }
-            }
-            
-            ToolbarItem(placement: .navigationBarTrailing) {
-                if hasNotificationChanges(for: spot) {
-                    Button("Save") {
-                        saveNotificationSettings(for: spot)
-                    }
-                    .disabled(isSavingChanges)
-                    .fontWeight(.semibold)
-                } else if showSaveConfirmation {
-                    Text("Saved!")
-                        .font(.caption).foregroundStyle(Color.green)
-                        .onAppear {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                showSaveConfirmation = false
-                            }
-                        }
-                }
-            }
-            
-            if spot.deletedAt == nil {
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    ActionsMenuView(
-                        spot: spot,
-                        onEdit: {
-                            self.spotToEdit = spot
-                        },
-                        onDelete: {
-                            self.spotToDelete = spot
-                            self.showingDeleteConfirmation = true
-                        },
-                        onIncrement: {
-                            spotsViewModel.incrementVisitCount(for: spot)
-                        },
-                        onDecrement: {
-                            spotsViewModel.decrementVisitCount(for: spot)
-                        },
-                        onReset: {
-                            spotsViewModel.resetVisitCount(for: spot)
-                        }
-                    )
-                }
+    @ToolbarContentBuilder
+    private func toolbarContent(for spot: Spot) -> some ToolbarContent {
+        if spot.deletedAt != nil {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Done") { dismiss() }.tint(Color.themeAccent)
             }
         }
+
+        ToolbarItem(placement: .navigationBarTrailing) {
+            if hasNotificationChanges(for: spot) {
+                Button("Save") {
+                    saveNotificationSettings(for: spot)
+                }
+                .disabled(isSavingChanges)
+                .fontWeight(.semibold)
+            } else if showSaveConfirmation {
+                Text("Saved!")
+                    .font(.caption)
+                    .foregroundStyle(Color.green)
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            showSaveConfirmation = false
+                        }
+                    }
+            }
+        }
+
+        // Share button (just sets state)
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Button {
+                Task {
+                    await handleShare(for: spot)
+                }
+            } label: { Image(systemName: "square.and.arrow.up") }
+        }
+
+        if spot.deletedAt == nil {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                ActionsMenuView(
+                    spot: spot,
+                    onEdit: { self.spotToEdit = spot },
+                    onDelete: {
+                        self.spotToDelete = spot
+                        self.showingDeleteConfirmation = true
+                    },
+                    onIncrement: { spotsViewModel.incrementVisitCount(for: spot) },
+                    onDecrement: { spotsViewModel.decrementVisitCount(for: spot) },
+                    onReset: { spotsViewModel.resetVisitCount(for: spot) },
+                    onShare: {
+                        Task {
+                            await handleShare(for: spot)
+                        }
+                    }
+                )
+            }
+        }
+    }
+    
+    private func handleShare(for spot: Spot) async {
+        guard let userId = authViewModel.userSession?.uid else { return } // <-- GET USER ID
+
+        do {
+            let collectionName: String? = nil
+            let senderName = authViewModel.userSession?.displayName
+
+            let url = try await SpotShareManager.makeShareURL(
+                from: spot,
+                collectionName: collectionName,
+                senderName: senderName,
+                userId: userId
+            )
+
+            let text = senderName != nil ? "\(senderName!) shared '\(spot.name)' with you!" : "Check out '\(spot.name)' on SweetSpots!"
+            itemToShare = ShareableContent(text: text, url: url)
+
+        } catch {
+            print("SpotDetailView: Failed to create share link: \(error)")
+            // Optionally, show an error alert here
+        }
+    }
     
     // MARK: - View Sections
     
@@ -306,9 +344,16 @@ struct SpotDetailView: View {
             DetailRow(iconName: "mappin.and.ellipse", title: "Address", content: spot.address)
             DetailRow(iconName: spot.category.systemImageName, title: "Category", content: spot.category.displayName, contentColor: Color.themePrimary)
             // ADDED: Display the collection if the spot belongs to one
-            if let collectionId = spot.collectionId,
-               let collection = collectionViewModel.collections.first(where: { $0.id == collectionId }) {
-                DetailRow(iconName: "tray.fill", title: "Collection", content: collection.name, contentColor: Color.themePrimary)
+            if !spot.collectionIds.isEmpty {
+                // Find all collection objects that match the IDs in the spot's array
+                let collections = collectionViewModel.collections.filter { spot.collectionIds.contains($0.id ?? "") }
+
+                // Use a DetailRow that can display multiple items
+                DetailRow(iconName: "tray.fill", title: "Collections") {
+                    // Create a comma-separated string of the collection names
+                    Text(collections.map { $0.name }.joined(separator: ", "))
+                        .foregroundStyle(Color.themePrimary)
+                }
             }
             
             // ADDED: Display the visit count

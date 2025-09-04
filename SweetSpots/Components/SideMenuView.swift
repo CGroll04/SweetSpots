@@ -25,7 +25,10 @@ struct SideMenuView: View {
     @State private var optionsCollection: SpotCollection? = nil
     @State private var showDeleteConfirmation = false
     @State private var showManageSpotsSheet = false
-    
+    @State private var itemToShare: ShareableContent? = nil
+    @State private var isCreatingShareLink = false
+
+
     // Local state for presenting sheets
     @State private var collectionToEdit: SpotCollection? = nil
     @State private var isTrashExpanded: Bool = false
@@ -93,6 +96,10 @@ struct SideMenuView: View {
             } message: {
                 Text("This action cannot be undone.")
             }
+            .sheet(item: $itemToShare) { item in
+                // Pass an array containing BOTH the text and the URL
+                ShareSheet(items: [item.text, item.url])
+            }
         }
     }
     
@@ -101,7 +108,7 @@ struct SideMenuView: View {
         collectionViewModel.deleteCollection(
             coll,
             mode: mode,
-            updateSpotsViewModel: spotsViewModel
+            allSpots: spotsViewModel.spots, // <-- PASS IN ALL THE SPOTS
         ) { result in
             switch result {
             case .success:
@@ -235,7 +242,7 @@ struct SideMenuView: View {
             } else {
                 ForEach(collectionViewModel.collections) { collection in
                     let isSelected = (selectedCollectionFilterId == collection.id)
-                    let count = spotsViewModel.spots.filter { $0.collectionId == collection.id }.count
+                    let count = spotsViewModel.spots.filter { $0.collectionIds.contains(collection.id ?? "") }.count
 
                     HStack(spacing: 15) {
                         Button {
@@ -281,6 +288,14 @@ struct SideMenuView: View {
                             } label: {
                                 Label("Edit Spots in Collection", systemImage: "checklist")
                             }
+                            
+                            Button {
+                                Task {
+                                    await handleShareCollection(collection)
+                                }
+                            } label: {
+                                Label("Share Collection", systemImage: "square.and.arrow.up")
+                            }
 
                             // 3) Delete
                             Button(role: .destructive) {
@@ -300,6 +315,37 @@ struct SideMenuView: View {
                 }
             }
         }
+    }
+    
+    // Add this new function inside the SideMenuView struct
+
+    private func handleShareCollection(_ collection: SpotCollection) async {
+        guard let collectionId = collection.id, let userId = authViewModel.userSession?.uid else { return }
+        isCreatingShareLink = true
+        
+        let spotsInCollection = spotsViewModel.spots.filter { $0.collectionIds.contains(collectionId) }
+        let senderName = authViewModel.userSession?.displayName
+        
+        do {
+            // This 'try await' call now correctly receives a non-optional URL or throws an error
+            let url = try await SpotShareManager.makeCollectionShareURL(
+                from: collection,
+                with: spotsInCollection,
+                senderName: senderName,
+                userId: userId
+            )
+            
+            let text = senderName != nil ? "\(senderName!) shared the '\(collection.name)' collection with you!" : "Check out the '\(collection.name)' collection on SweetSpots!"
+            
+            // This line will no longer have an error
+            itemToShare = ShareableContent(text: text, url: url)
+            
+        } catch {
+            print("SideMenuView: Failed to create collection share URL: \(error)")
+            // You can show an error alert to the user here
+        }
+        
+        isCreatingShareLink = false
     }
     
     @ViewBuilder

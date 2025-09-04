@@ -159,7 +159,7 @@ struct MapView: View {
                 }
             }
             .sheet(isPresented: $showingAddSheet) {
-                AddSpotView(isPresented: $showingAddSheet, spotToEdit: nil, prefilledURL: nil)
+                AddSpotView(isPresented: $showingAddSheet, spotToEdit: nil, prefilledPayload: nil, prefilledURL: nil)
                     .environmentObject(spotsViewModel)
                     .environmentObject(authViewModel)
                     .environmentObject(locationManager)

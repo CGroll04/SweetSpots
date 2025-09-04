@@ -370,12 +370,22 @@ extension DateFormatter {
 
 // MARK: - App Constants
 struct AppConstants {
+    
+    static let universalLinkHost = "sweetspotsshare.netlify.app"
+    static let universalLinkPrefix = "/s"          // or whatever you chose
+    static let downloadPath = "/download"
+    // App Store/TestFlight links (fill in later)
+    static let appStoreURL = "https://apps.apple.com/app/idXXXXXXXXX"
+    static let testFlightURL = "https://testflight.apple.com/join/XXXXXXXX"
+    
     // Notification keys
     static let spotNotificationTappedKey = "spotNotificationTapped"
     static let pendingSharedURLKey = "pendingSharedURL"
     
     // UserDefaults keys
     static let globalGeofencingEnabledKey = "globalGeofencingEnabled"
+    
+    static let pendingSharedSpotPayloadKey = "PendingSharedSpotPayload"
     
     // Validation constants
     static let minPasswordLength = 6
@@ -419,5 +429,15 @@ struct ShadowModifier: ViewModifier {
 extension View {
     func shadow(_ shadow: Shadow) -> some View {
         modifier(ShadowModifier(shadow: shadow))
+    }
+}
+
+extension Data {
+    init?(base64URLEncoded: String) {
+        var s = base64URLEncoded.replacingOccurrences(of: "-", with: "+")
+                                 .replacingOccurrences(of: "_", with: "/")
+        let pad = 4 - (s.count % 4)
+        if pad < 4 { s.append(String(repeating: "=", count: pad)) }
+        self.init(base64Encoded: s)
     }
 }

@@ -24,7 +24,7 @@ struct ContentView: View {
                 AuthView()
             } else {
                 // If a user session exists (user is signed in), present the main application interface.
-                MainTabView()
+                MainTabView(authViewModel: authViewModel)
             }
         }
         // Apply a fade-in/out animation when switching between AuthView and MainTabView

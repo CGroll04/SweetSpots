@@ -117,21 +117,21 @@ struct EditCollectionView: View {
     }
     
     private func deleteCollection(mode: DeletionMode) {
-            isProcessing = true
-            collectionViewModel.deleteCollection(
-                self.collection,
-                mode: mode,
-                updateSpotsViewModel: spotViewModel // Pass the SpotViewModel
-            ) { result in
-                isProcessing = false
-                switch result {
-                case .success:
-                    dismiss()
-                case .failure(let error):
-                    alertInfo = EditCollectionAlertInfo(title: "Delete Failed", message: error.localizedDescription)
-                }
+        isProcessing = true
+        collectionViewModel.deleteCollection(
+            self.collection,
+            mode: mode,
+            allSpots: spotViewModel.spots // <-- PASS IN THE SPOTS ARRAY
+        ) { result in
+            isProcessing = false
+            switch result {
+            case .success:
+                dismiss()
+            case .failure(let error):
+                alertInfo = EditCollectionAlertInfo(title: "Delete Failed", message: error.localizedDescription)
             }
         }
+    }
 
     private func hasChanges() -> Bool {
         let trimmedName = editableName.trimmedSafe()

@@ -75,7 +75,7 @@ struct ManageSpotsInCollectionView: View {
 
     private var initiallyInCollection: Set<String> {
         Set(spotsViewModel.spots
-            .filter { $0.collectionId == collection.id }
+            .filter { $0.collectionIds.contains(collection.id ?? "") }
             .compactMap { $0.id })
     }
 
@@ -137,15 +137,18 @@ struct ManageSpotsInCollectionView: View {
         let toAdd = selectedSpotIDs.subtracting(current)
         let toRemove = current.subtracting(selectedSpotIDs)
 
-        // Fire-and-forget (listeners will refresh UI). If you want to await, see the robust version below.
+        // CORRECTED: Call the new, specific function names
         if !toAdd.isEmpty {
-            spotsViewModel.addSpots(toAdd, toCollection: collId)
+            spotsViewModel.addSpotsToCollection(spotIDs: toAdd, toCollection: collId)
         }
         if !toRemove.isEmpty {
-            spotsViewModel.removeSpotsFromCollection(toRemove)
+            spotsViewModel.removeSpotsFromCollection(spotIDs: toRemove, fromCollection: collId)
         }
 
-        isProcessing = false
-        dismiss()
+        // Give Firestore a moment to process before dismissing
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.isProcessing = false
+            self.dismiss()
+        }
     }
 }

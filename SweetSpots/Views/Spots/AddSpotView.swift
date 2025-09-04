@@ -9,6 +9,7 @@ import SwiftUI
 import MapKit
 import FirebaseCore
 import Combine
+import CoreLocation
 
 @MainActor
 class AddSpotViewModel: ObservableObject {
@@ -59,8 +60,9 @@ class SpotFormState: ObservableObject, Identifiable {
     @Published var selectedCategory: SpotCategory? = nil
     @Published var spotPhoneNumber: String = ""
     @Published var spotWebsiteURLInput: String = ""
-    @Published var selectedCollectionId: String? = nil
+    @Published var selectedCollectionIds: Set<String> = []
     @Published var spotNotes: String = ""
+    @Published var isFromShare: Bool = false
 
     // MARK: - Notification Setting Properties (Moved from AddSpotView)
     @Published var wantsNearbyNotificationForThisSpot: Bool = false
@@ -82,9 +84,10 @@ class SpotFormState: ObservableObject, Identifiable {
         setupSearchCompleterSubscription()
     }
 
-    init(sourceURL: String, collectionId: String? = nil) {
+    init(sourceURL: String, collectionIds: [String] = []) {
         self.spotSourceURLInput = sourceURL
-        self.selectedCollectionId = collectionId
+        self.selectedCollectionIds = Set(collectionIds)
+        self.isFromShare = true
         setupSearchCompleterSubscription()
 
     }
@@ -101,7 +104,7 @@ class SpotFormState: ObservableObject, Identifiable {
         self.selectedCategory = spot.category
         self.spotPhoneNumber = spot.phoneNumber ?? ""
         self.spotWebsiteURLInput = spot.websiteURL ?? ""
-        self.selectedCollectionId = spot.collectionId
+        self.selectedCollectionIds = Set(spot.collectionIds) // <-- UPDATED THIS LINE
         self.spotNotes = spot.notes ?? ""
         self.wantsNearbyNotificationForThisSpot = spot.wantsNearbyNotification
 
@@ -113,8 +116,24 @@ class SpotFormState: ObservableObject, Identifiable {
             self.customRadiusText = String(Int(validRadius))
             self.showingCustomRadiusTextField = true
         }
+        
+        self.isFromShare = false
         setupSearchCompleterSubscription()
 
+    }
+    
+    init(payload: SharedSpotPayload) {
+        self.spotName = payload.name
+        self.spotAddress = payload.address
+        self.spotCoordinates = CLLocationCoordinate2D(latitude: payload.latitude, longitude: payload.longitude)
+        self.selectedCategory = SpotCategory(rawValue: payload.category) ?? .other
+        self.spotPhoneNumber = payload.phoneNumber ?? ""
+        self.spotWebsiteURLInput = payload.websiteURL ?? ""
+        self.selectedCollectionIds = [] // Imported spots start with no collections, user adds them
+        self.spotNotes = payload.notes ?? ""
+        self.spotSourceURLInput = payload.sourceURL ?? "Manually Added" // <-- ADD THIS LINE
+        self.isFromShare = true
+        setupSearchCompleterSubscription()
     }
     
     private func setupSearchCompleterSubscription() {
@@ -150,7 +169,7 @@ class SpotFormState: ObservableObject, Identifiable {
         if selectedCategory != original.category { return true }
         if spotPhoneNumber.trimmedSafe() != (original.phoneNumber ?? "") { return true }
         if spotWebsiteURLInput.trimmedSafe() != (original.websiteURL ?? "") { return true }
-        if selectedCollectionId != original.collectionId { return true }
+        if selectedCollectionIds != Set(original.collectionIds) { return true } // <-- UPDATED THIS LINE
         if spotNotes.trimmedSafe() != (original.notes ?? "") { return true }
         if wantsNearbyNotificationForThisSpot != original.wantsNearbyNotification { return true }
         if !notificationRadiusForThisSpot.isApproximately(original.notificationRadiusMeters) { return true }
@@ -213,7 +232,7 @@ class SpotFormState: ObservableObject, Identifiable {
             category: category,
             phoneNumber: finalPhoneNumber,
             websiteURL: finalWebsiteURL,
-            collectionId: selectedCollectionId,
+            collectionIds: Array(self.selectedCollectionIds), // <-- UPDATED THIS LINE
             wantsNearbyNotification: wantsNearbyNotificationForThisSpot,
             notificationRadiusMeters: finalRadius,
             notes: finalNotes
@@ -247,11 +266,13 @@ struct AddSpotView: View {
     // MARK: - View Presentation & Mode
     @Binding var isPresented: Bool
     let spotToEdit: Spot?
+    let prefilledPayload: SharedSpotPayload?
     let prefilledURL: URL?
 
-    enum ViewMode { case addNewManual, addFromShare, edit }
+    enum ViewMode { case addNewManual, addFromShare, addFromPayload, edit }
     private var mode: ViewMode {
         if spotToEdit != nil { return .edit }
+        if prefilledPayload != nil { return .addFromPayload } // <-- 3. ADD THIS CHECK
         if prefilledURL != nil { return .addFromShare }
         return .addNewManual
     }
@@ -285,14 +306,14 @@ struct AddSpotView: View {
         switch mode {
         case .addNewManual: return "Add New SweetSpot"
         case .addFromShare: return "New SweetSpot from Share"
+        case .addFromPayload: return "Add Shared SweetSpot"
         case .edit: return "Edit SweetSpot"
         }
     }
 
     // MARK: - Body
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
+        NavigationStack{
                 // The main container for our new dynamic form list
                 formContentContainer()
                     .layoutPriority(1)
@@ -322,7 +343,6 @@ struct AddSpotView: View {
                     self.alertInfo = nil; info.onDismiss?()
                 })
             }
-        }
         .onAppear(perform: setupView)
         // Ensure child views like SpotFormSectionView have access to the collection view model
         .environmentObject(collectionViewModel)
@@ -469,27 +489,37 @@ struct AddSpotView: View {
         if let userId = authViewModel.userSession?.uid, collectionViewModel.collections.isEmpty && !collectionViewModel.isLoading {
             collectionViewModel.fetchCollections(userId: userId)
         }
-
-        guard viewModel.spotForms.isEmpty else { return } // Prevent re-initialization
+        guard viewModel.spotForms.isEmpty else { return }
 
         let form: SpotFormState
+
         switch mode {
         case .edit:
             guard let spot = spotToEdit else { fatalError("Edit mode requires a spot.") }
             form = SpotFormState(spot: spot)
-            if let userLoc = locationManager.userLocation {
-                form.searchCompleterVM.searchRegion = MKCoordinateRegion(center: userLoc.coordinate, latitudinalMeters: 50000, longitudinalMeters: 50000)
-            }
+            
+        case .addFromPayload: // <-- 5. ADD THIS NEW CASE
+            guard let payload = prefilledPayload else { fatalError("Payload mode requires a payload.") }
+            form = SpotFormState(payload: payload)
+
         case .addFromShare:
-            guard let url = prefilledURL else { fatalError("Share mode requires a URL.") }
-            form = SpotFormState(sourceURL: url.absoluteString)
+            // This case now only handles the old share extension flow
+            // The logic for reading from UserDefaults is kept for that, but can be removed if you migrate fully.
+            if let url = prefilledURL {
+                form = SpotFormState(sourceURL: url.absoluteString)
+            } else {
+                form = SpotFormState() // Fallback
+            }
+
         case .addNewManual:
             form = SpotFormState()
         }
-        
-        // Configure search region for new spots
+
         if mode != .edit, let userLoc = locationManager.userLocation {
-            form.searchCompleterVM.searchRegion = MKCoordinateRegion(center: userLoc.coordinate, latitudinalMeters: 100000, longitudinalMeters: 100000)
+            form.searchCompleterVM.searchRegion = MKCoordinateRegion(
+                center: userLoc.coordinate,
+                latitudinalMeters: 100_000, longitudinalMeters: 100_000
+            )
         }
 
         viewModel.spotForms.append(form)
@@ -499,8 +529,8 @@ struct AddSpotView: View {
     private func addForm() {
         guard let url = prefilledURL else { return }
         // Pre-populate with the same source URL and collection if one was selected
-        let lastCollectionId = viewModel.spotForms.last?.selectedCollectionId
-        let newForm = SpotFormState(sourceURL: url.absoluteString, collectionId: lastCollectionId)
+        let lastCollectionIds = viewModel.spotForms.last?.selectedCollectionIds ?? []
+        let newForm = SpotFormState(sourceURL: url.absoluteString, collectionIds: Array(lastCollectionIds))
         
         if let userLoc = locationManager.userLocation {
             newForm.searchCompleterVM.searchRegion = MKCoordinateRegion(center: userLoc.coordinate, latitudinalMeters: 100000, longitudinalMeters: 100000)
@@ -636,46 +666,20 @@ struct SpotFormSectionView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
     @FocusState private var focusedField: AddSpotView.FormField?
-
-    @State private var pickerSelection: AnyHashable = AnyHashable(NoCollectionAction())
     
     @State private var isShowingAddCollectionAlert = false
 
     @State private var newCollectionName = ""
-
-    // Helper structs for the Picker
-    private struct AddNewAction: Hashable, Identifiable { let id = "add" }
-    private struct NoCollectionAction: Hashable, Identifiable { let id = "none" }
     
     var body: some View {
-        // Use a DisclosureGroup for the collapsible UI
-        DisclosureGroup(
-            isExpanded: $formState.isExpanded,
-            content: { formFields },
-            label: { headerLabel }
-        )
-        .tint(Color.themePrimary)
-        .onAppear {
-            // Initialize the non-optional state.
-            if let collectionId = formState.selectedCollectionId {
-                pickerSelection = AnyHashable(collectionId)
-            } else {
-                pickerSelection = AnyHashable(NoCollectionAction())
-            }
-        }
-        .alert("New Collection", isPresented: $isShowingAddCollectionAlert) {
-            TextField("Collection Name", text: $newCollectionName)
-                .autocorrectionDisabled()
-            Button("Create") { handleCreateCollection() }
-                .disabled(newCollectionName.trimmingCharacters(in: .whitespaces).isEmpty)
-            Button("Cancel", role: .cancel) { }
-        } message: {Text("Collections are like folders to organize your spots")
- }
-        .onChange(of: focusedField) { oldValue, newValue in
-            if newValue != nil { onFieldFocused() }
-            else if oldValue != nil && newValue == nil { onFieldBlurred() }
-        }
-    }
+       DisclosureGroup(isExpanded: $formState.isExpanded) {
+           formFields
+       } label: {
+           headerLabel
+       }
+       .tint(Color.themePrimary)
+       // DELETE the old .onAppear and .alert modifiers
+   }
     
     // The label for the DisclosureGroup, including the name and remove button.
     private var headerLabel: some View {
@@ -722,7 +726,7 @@ struct SpotFormSectionView: View {
         
         ThemedTextField(title: "Source URL", text: $formState.spotSourceURLInput, systemImage: "link")
             .focused($focusedField, equals: .url)
-            .disabled(formState.spotSourceURLInput.isValidURL) // Disable if it came from share extension
+            .disabled(formState.isFromShare) // Disable if it came from share extension
         
         ZStack {
             // Our custom view that LOOKS like a form row. This is what the user sees.
@@ -979,71 +983,37 @@ struct SpotFormSectionView: View {
         }
     }
     
+    // A helper to create a display string for the selected collections
+    private var collectionsDisplayString: String {
+        let selected = collectionViewModel.collections.filter {
+            guard let id = $0.id else { return false }
+            return formState.selectedCollectionIds.contains(id)
+        }
+
+        if selected.isEmpty {
+            return "No Collection"
+        } else {
+            return selected.map { $0.name }.joined(separator: ", ")
+        }
+    }
+
     @ViewBuilder
     private func collectionPicker() -> some View {
-        Picker("Collection", selection: $pickerSelection) {
-            Text("No Collection").tag(AnyHashable(NoCollectionAction()))
-            ForEach(collectionViewModel.collections) { collection in
-                // Safely unwrap the optional ID to ensure the tag type is always String
-                if let collectionId = collection.id {
-                    Text(collection.name).tag(AnyHashable(collectionId))
-                }
-            }
-            Divider()
-            Label("Add New Collection...", systemImage: "plus.circle.fill")
-                .tag(AnyHashable(AddNewAction()))
-        }
-        .tint(.themePrimary)
-        .onChange(of: pickerSelection) { oldValue, newValue in
-            switch newValue.base {
-            case is AddNewAction:
-                // When "Add New" is tapped...
-                newCollectionName = "" // Clear previous text
-                isShowingAddCollectionAlert = true // ...show the alert.
-                pickerSelection = oldValue // Revert visual selection.
-
-            case is NoCollectionAction:
-                formState.selectedCollectionId = nil
-
-            case let newId as String:
-                formState.selectedCollectionId = newId
-            
-            default:
-                formState.selectedCollectionId = nil
+        // The Picker is now a NavigationLink to our new multi-selector view
+        NavigationLink {
+            MultiCollectionSelectorView(selectedCollectionIds: $formState.selectedCollectionIds)
+                .environmentObject(collectionViewModel)
+        } label: {
+            HStack {
+                Text("Collections")
+                Spacer()
+                Text(collectionsDisplayString)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
     }
     
-    /// A new helper function to contain the logic for creating the collection.
-    private func handleCreateCollection() {
-        guard let userId = authViewModel.userSession?.uid else { return }
-        let trimmedName = newCollectionName.trimmedSafe()
-        guard !trimmedName.isEmpty else { return }
-
-        // Start an async task to handle the creation and state update.
-        Task {
-            do {
-                // We will now 'await' the result from the ViewModel.
-                // This requires a small change in CollectionViewModel.
-                let newId = try await collectionViewModel.addCollection(name: trimmedName, userId: userId)
-                
-                // --- SUCCESS ---
-                // Because we awaited the result, we know the new collection exists
-                // in the ViewModel before we try to update the UI.
-                
-                // Update the form's central state.
-                self.formState.selectedCollectionId = newId
-                
-                // Update the picker's local state so the UI reflects the new selection.
-                self.pickerSelection = AnyHashable(newId)
-                
-            } catch {
-                // Handle potential errors from the ViewModel.
-                print("Error creating collection: \(error.localizedDescription)")
-                // Optionally, show an error alert to the user here.
-            }
-        }
-    }
     
     // MARK: Logic
     private func processSearchSelection(_ completion: MKLocalSearchCompletion) {
