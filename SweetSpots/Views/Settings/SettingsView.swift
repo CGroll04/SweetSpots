@@ -8,16 +8,23 @@
 import SwiftUI
 
 struct SettingsView: View {
+    
+    let onDismiss: () -> Void
+
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var spotsViewModel: SpotViewModel
     @EnvironmentObject private var locationManager: LocationManager
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
+    @EnvironmentObject private var navigationViewModel: NavigationViewModel
 
     // State for alerts
     @State private var showingSignOutAlert = false
     @State private var alertInfo: AlertInfo? = nil
     @State private var showingBulkAlertConfirmation: BulkAlertActionType? = nil
     @State private var isProcessingBulkUpdate: Bool = false
+    
+    @State private var isTrashExpanded: Bool = false
+    @State private var spotToShowDetails: Spot? = nil
 
     @AppStorage("globalGeofencingEnabled") private var globalGeofencingSystemEnabled: Bool = true
     
@@ -42,8 +49,8 @@ struct SettingsView: View {
             Form {
                 userProfileSection()
                 notificationsAndLocationSection()
-                bulkSpotAlertsSection()
                 aboutSection()
+                recentlyDeletedSection()
                 accountActionsSection()
             }
             .navigationTitle("Settings")
@@ -66,6 +73,15 @@ struct SettingsView: View {
                     },
                     secondaryButton: .cancel()
                 )
+            }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { onDismiss() }.tint(Color.themeAccent)
+                }
+            }
+            .sheet(item: $spotToShowDetails) { spot in
+                // This sheet for viewing deleted spot details remains useful
+                SpotDetailView(spotId: spot.id ?? "", presentedFrom: .list)
             }
             .overlay {
                 if isProcessingBulkUpdate {
@@ -158,16 +174,89 @@ struct SettingsView: View {
         @unknown default: return .gray
         }
     }
+    
+    /// Section for viewing and managing recently deleted spots.
+    @ViewBuilder
+    private func recentlyDeletedSection() -> some View {
+        if !spotsViewModel.recentlyDeletedSpots.isEmpty {
+            Section(header: Text("Recently Deleted")) {
+                DisclosureGroup(isExpanded: $isTrashExpanded) {
+                    ForEach(spotsViewModel.recentlyDeletedSpots) { spot in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(spot.name)
+                                    .foregroundStyle(.primary)
+                                
+                                if let days = daysRemaining(for: spot) {
+                                    Text("Permanently deleted in \(days) day\(days == 1 ? "" : "s")")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                spotToShowDetails = spot
+                            }
+                            
+                            Spacer(minLength: 8)
+                            
+                            Menu {
+                                Button {
+                                    spotsViewModel.restoreSpot(spot)
+                                } label: {
+                                    Label("Restore Spot", systemImage: "arrow.uturn.backward.circle.fill")
+                                }
+                                
+                                Button(role: .destructive) {
+                                    spotsViewModel.permanentlyDeleteSpot(spot)
+                                } label: {
+                                    Label("Delete Permanently", systemImage: "trash.fill")
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
+                                    .font(.body)
+                            }
+                            .tint(.secondary)
+                        }
+                        .padding(.vertical, 8)
+                    }
+                } label: {
+                    // This is the main row for the disclosure group
+                    HStack {
+                         Image(systemName: "trash")
+                             .font(.callout)
+                             .frame(width: 20, alignment: .center)
+                             .foregroundStyle(.secondary)
+
+                         Text("Trash")
+                             .foregroundStyle(.primary)
+                         
+                         Spacer()
+                         
+                         Text("\(spotsViewModel.recentlyDeletedSpots.count)")
+                             .font(.caption.weight(.medium))
+                             .padding(.horizontal, 8)
+                             .padding(.vertical, 4)
+                             .background(Color.secondary.opacity(0.1))
+                             .clipShape(Capsule())
+                    }
+                }
+            }
+        }
+    }
+    
+    private func daysRemaining(for spot: Spot) -> Int? {
+        guard let deletedDate = spot.deletedAt?.dateValue() else { return nil }
+        let calendar = Calendar.current
+        let expirationDate = calendar.date(byAdding: .day, value: 30, to: deletedDate) ?? deletedDate
+        let components = calendar.dateComponents([.day], from: Date(), to: expirationDate)
+        return max(0, components.day ?? 0)
+    }
 
     @ViewBuilder
     private func aboutSection() -> some View {
         Section(header: Text("About")) {
             LabeledContent("App Version", value: currentAppVersion())
-            #if DEBUG
-            LabeledContent("Active Geofences", value: "\(locationManager.activeGeofenceIDs.count)")
-            LabeledContent("Total Spots", value: "\(spotsViewModel.spots.count)")
-            LabeledContent("Spots with Alerts", value: "\(spotsViewModel.spots.filter { $0.wantsNearbyNotification }.count)")
-            #endif
         }
     }
 
@@ -176,47 +265,6 @@ struct SettingsView: View {
         Section {
             Button("Sign Out", role: .destructive, action: { showingSignOutAlert = true })
                 .frame(maxWidth: .infinity, alignment: .center)
-        }
-    }
-    
-    @ViewBuilder
-    private func bulkSpotAlertsSection() -> some View {
-        Section(header: Text("Individual Spot Alerts")) {
-            let spotsWithAlerts = spotsViewModel.spots.filter { $0.wantsNearbyNotification }.count
-            let totalSpots = spotsViewModel.spots.count
-            
-            if totalSpots > 0 {
-                Text("\(spotsWithAlerts) of \(totalSpots) spots have alerts enabled")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            
-            Button("Enable Alerts for All Spots") {
-                guard self.globalGeofencingSystemEnabled else {
-                    alertInfo = AlertInfo(title: "System Disabled", message: "Please enable the 'Proximity Alerts System' toggle first to manage individual spot alerts.")
-                    return
-                }
-                guard totalSpots > 0 else {
-                    alertInfo = AlertInfo(title: "No Spots", message: "You don't have any spots yet. Add some spots first!")
-                    return
-                }
-                showingBulkAlertConfirmation = .enableAll
-            }
-            .disabled(isProcessingBulkUpdate || totalSpots == 0)
-            .tint(Color.accentColor)
-            
-            Button("Disable Alerts for All Spots", role: .destructive) {
-                guard self.globalGeofencingSystemEnabled else {
-                    alertInfo = AlertInfo(title: "System Disabled", message: "Please enable the 'Proximity Alerts System' toggle first.")
-                    return
-                }
-                guard totalSpots > 0 else {
-                    alertInfo = AlertInfo(title: "No Spots", message: "You don't have any spots yet.")
-                    return
-                }
-                showingBulkAlertConfirmation = .disableAll
-            }
-            .disabled(isProcessingBulkUpdate || totalSpots == 0)
         }
     }
 

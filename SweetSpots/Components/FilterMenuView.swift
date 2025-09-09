@@ -11,18 +11,23 @@ struct FilterMenuView: View {
     // Bindings to control the parent view's state
     @Binding var collectionFilterState: SpotListView.CollectionFilterState
     @Binding var selectedCategoryFilters: Set<SpotCategory>
+    
+    let showCollectionFilterOptions: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Section 1: Collection Filtering
-            filterSection(title: "Show Spots") {
-                // We'll create a button for each state to look like the category rows
-                collectionToggleButton(for: .all, title: "All Spots", icon: "square.stack.3d.up")
-                collectionToggleButton(for: .inCollection, title: "In Collections", icon: "folder.fill")
-                collectionToggleButton(for: .notInCollection, title: "Not in a Collection", icon: "tray.fill")
+            if showCollectionFilterOptions {
+                // Section 1: Collection Filtering
+                filterSection(title: "Show Spots") {
+                    collectionToggleButton(for: .all, title: "All Spots", icon: "square.stack.3d.up")
+                    collectionToggleButton(for: .inCollection, title: "In Collections", icon: "folder.fill")
+                    collectionToggleButton(for: .notInCollection, title: "Not in a Collection", icon: "tray.fill")
+                }
+                
+                Divider().padding(.vertical, 8)
             }
             
-            Divider().padding(.vertical, 8)
 
             // Section 2: Category Filtering
             filterSection(title: "Filter by Category") {
@@ -34,7 +39,6 @@ struct FilterMenuView: View {
         }
         .padding(.vertical, 8)
         .frame(width: 280) // A good width for a popover menu
-        .presentationCompactAdaptation(.popover) // Crucial for iPhone to look like a popover
     }
     
     // A generic view for section headers

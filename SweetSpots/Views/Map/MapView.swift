@@ -19,6 +19,7 @@ struct MapView: View {
 
     // MARK: - State Variables
     @State private var showingAddSheet: Bool = false // 1. ADD THIS STATE
+    @State private var showingSettingsSheet = false // <-- ADD THIS
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var viewingRegion: MKCoordinateRegion? = nil
     
@@ -146,14 +147,21 @@ struct MapView: View {
                     
                     // Buttons on the right
                     ToolbarItemGroup(placement: .navigationBarTrailing) {
-                        geofenceToggleButton()
-                        mapCategoryFilterMenu()
                         
                         Button {
                             showingAddSheet = true
                         } label: {
                             Image(systemName: "plus")
                                 .foregroundStyle(Color.themePrimary)
+                        }
+                        
+                        mapCategoryFilterMenu()
+                        geofenceToggleButton()
+                        
+                        Button {
+                            showingSettingsSheet = true
+                        } label: {
+                            Label("Settings", systemImage: "gearshape")
                         }
                     }
                 }
@@ -165,6 +173,11 @@ struct MapView: View {
                     .environmentObject(locationManager)
                     .environmentObject(collectionViewModel)
                     .environmentObject(navigationViewModel)
+            }
+            .sheet(isPresented: $showingSettingsSheet) {
+                SettingsView(
+                    onDismiss: { showingSettingsSheet = false }
+                )
             }
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarHidden(navigationViewModel.isNavigating)

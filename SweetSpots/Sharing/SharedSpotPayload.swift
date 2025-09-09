@@ -35,3 +35,26 @@ struct SharedSpotPayload: Codable, Equatable {
     var expiresAt: Timestamp?
     var v: Int = 1
 }
+
+extension SharedSpotPayload {
+    /// Creates a payload from a full Spot object.
+    init(from spot: Spot) {
+        self.name = spot.name
+        self.address = spot.address
+        self.latitude = spot.latitude
+        self.longitude = spot.longitude
+        self.category = spot.category.rawValue
+        
+        // Map all other relevant properties
+        self.phoneNumber = spot.phoneNumber
+        self.websiteURL = spot.websiteURL
+        self.notes = spot.notes
+        self.sourceURL = spot.sourceURL
+        self.wantsNearbyNotification = spot.wantsNearbyNotification
+        self.notificationRadiusMeters = spot.notificationRadiusMeters
+        
+        // Note: Fields like `senderName` and `expiresAt` are left nil
+        // because they belong to the temporary share model, not the
+        // new permanent link model.
+    }
+}

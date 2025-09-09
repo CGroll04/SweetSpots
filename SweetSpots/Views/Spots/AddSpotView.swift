@@ -487,7 +487,7 @@ struct AddSpotView: View {
     /// Step 4 (cont.): Rewritten setupView to initialize the `spotForms` array.
     private func setupView() {
         if let userId = authViewModel.userSession?.uid, collectionViewModel.collections.isEmpty && !collectionViewModel.isLoading {
-            collectionViewModel.fetchCollections(userId: userId)
+            collectionViewModel.listenForCollections(userId: userId)
         }
         guard viewModel.spotForms.isEmpty else { return }
 

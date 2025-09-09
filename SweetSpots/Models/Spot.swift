@@ -37,7 +37,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         }
     }
     var collectionIds: [String] = [] // Replaces `collectionId: String?`
-    var visitCount: Int = 0
+//    var visitCount: Int = 0
     var deletedAt: Timestamp? = nil
 
     /// Provides map-compatible coordinates.
@@ -83,7 +83,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
             case _notificationRadiusMeters = "notificationRadiusMeters"
             case collectionIds // <-- UPDATED THIS LINE
             case notes
-            case visitCount
+//            case visitCount
             case deletedAt
         }
 
@@ -102,7 +102,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         wantsNearbyNotification: Bool = false,
         notificationRadiusMeters: Double = 200.0,
         notes: String? = nil,
-        visitCount: Int = 0,
+//        visitCount: Int = 0,
         deletedAt: Timestamp? = nil
     ) {
         self.id = id
@@ -207,7 +207,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         deletedAt = try container.decodeIfPresent(Timestamp.self, forKey: .deletedAt)
         
 
-        visitCount = try container.decodeIfPresent(Int.self, forKey: .visitCount) ?? 0
+//        visitCount = try container.decodeIfPresent(Int.self, forKey: .visitCount) ?? 0
     }
 }
 

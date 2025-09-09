@@ -225,9 +225,9 @@ struct SpotDetailView: View {
                         self.spotToDelete = spot
                         self.showingDeleteConfirmation = true
                     },
-                    onIncrement: { spotsViewModel.incrementVisitCount(for: spot) },
-                    onDecrement: { spotsViewModel.decrementVisitCount(for: spot) },
-                    onReset: { spotsViewModel.resetVisitCount(for: spot) },
+//                    onIncrement: { spotsViewModel.incrementVisitCount(for: spot) },
+//                    onDecrement: { spotsViewModel.decrementVisitCount(for: spot) },
+//                    onReset: { spotsViewModel.resetVisitCount(for: spot) },
                     onShare: {
                         Task {
                             await handleShare(for: spot)
@@ -357,7 +357,7 @@ struct SpotDetailView: View {
             }
             
             // ADDED: Display the visit count
-            DetailRow(iconName: "checkmark.circle.fill", title: "Times Visited", content: "\(spot.visitCount)")
+//            DetailRow(iconName: "checkmark.circle.fill", title: "Times Visited", content: "\(spot.visitCount)")
 
             if let phone = spot.phoneNumber, !phone.isEmpty {
                 DetailRow(iconName: "phone.fill", title: "Phone") {

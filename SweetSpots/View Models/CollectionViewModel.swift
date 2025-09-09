@@ -64,7 +64,7 @@ class CollectionViewModel: ObservableObject {
     }
 
     /// Fetches all collections for the specified `userId` and listens for real-time updates.
-    func fetchCollections(userId: String) {
+    func listenForCollections(userId: String) {
         guard !userId.isEmpty else {
             self.errorMessage = "User ID is missing. Cannot fetch collections."
             isLoading = false

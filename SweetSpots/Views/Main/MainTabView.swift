@@ -74,8 +74,8 @@ struct MainTabView: View {
     private var tabViewContent: some View {
         TabView(selection: $selectedTab) {
             spotListTab()
+            collectionsTab()
             mapTab()
-            settingsTab()
             }
             .accentColor(Color.themePrimary)
             .environmentObject(locationManager)
@@ -93,7 +93,7 @@ struct MainTabView: View {
         }
         .onChange(of: navigationViewModel.navigationState) { _, newState in
             if case .selectingRoute = newState {
-                selectedTab = 1
+                selectedTab = 2
             }
         }
         .onChange(of: spotsViewModel.spots) { oldValue, newValue in
@@ -185,6 +185,7 @@ struct MainTabView: View {
     }
     
     // MARK: - Tab Views
+    
     private func spotListTab() -> some View {
         SpotListView()
             .tabItem {
@@ -193,18 +194,23 @@ struct MainTabView: View {
             .tag(0)
     }
     
+    private func collectionsTab() -> some View {
+            // NavigationStack is crucial for allowing navigation from the gallery to the detail view.
+            NavigationStack {
+                CollectionsGalleryView()
+            }
+            .tabItem {
+                Label("Collections", systemImage: selectedTab == 1 ? "square.stack.3d.up.fill" : "square.stack.3d.up")
+            }
+            .tag(1)
+        }
+    
+    
+    
     private func mapTab() -> some View {
         MapView()
             .tabItem {
-                Label("Map", systemImage: selectedTab == 1 ? "map.fill" : "map")
-            }
-            .tag(1)
-    }
-    
-    private func settingsTab() -> some View {
-        SettingsView()
-            .tabItem {
-                Label("Settings", systemImage: selectedTab == 2 ? "gearshape.fill" : "gearshape")
+                Label("Map", systemImage: selectedTab == 2 ? "map.fill" : "map")
             }
             .tag(2)
     }
@@ -214,7 +220,7 @@ struct MainTabView: View {
         if case .navigateToSpotID = action {
             // This function's only job now is to set the tab.
             // The alert is responsible for showing the UI.
-            selectedTab = 1
+            selectedTab = 2
         }
     }
     
@@ -274,24 +280,7 @@ struct MainTabView: View {
         print("MainTabView: Performing setup for user UID: \(userId).")
         spotsViewModel.listenForSpots(userId: userId)
         spotsViewModel.purgeExpiredSpots(for: userId)
-        collectionViewModel.fetchCollections(userId: userId)
-        
-        let lastCleanupKey = "lastShareCleanupDate_\(userId)"
-        let oneDayInSeconds: TimeInterval = 24 * 60 * 60
-
-        if let lastCleanupDate = UserDefaults.standard.object(forKey: lastCleanupKey) as? Date {
-            if Date().timeIntervalSince(lastCleanupDate) > oneDayInSeconds {
-                // It's been more than a day, run cleanup
-                print("Performing daily share cleanup...")
-                spotsViewModel.performShareCleanup(for: userId)
-                UserDefaults.standard.set(Date(), forKey: lastCleanupKey)
-            }
-        } else {
-            // Never run before for this user, run cleanup
-            print("Performing first-time share cleanup...")
-            spotsViewModel.performShareCleanup(for: userId)
-            UserDefaults.standard.set(Date(), forKey: lastCleanupKey)
-        }
+        collectionViewModel.listenForCollections(userId: userId)
         
         setupLocationServices()
         Task { await attemptInitialGeofenceSync() }

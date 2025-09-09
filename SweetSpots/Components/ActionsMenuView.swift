@@ -11,36 +11,36 @@ struct ActionsMenuView: View {
     let spot: Spot
     let onEdit: () -> Void
     let onDelete: () -> Void
-    let onIncrement: () -> Void
-    let onDecrement: () -> Void
-    let onReset: () -> Void
+//    let onIncrement: () -> Void
+//    let onDecrement: () -> Void
+//    let onReset: () -> Void
     let onShare: (() -> Void)?
 
     var body: some View {
         Menu {
-            Button {
-                onIncrement()
-            } label: {
-                Label("Add Visit", systemImage: "plus")
-            }
+//            Button {
+//                onIncrement()
+//            } label: {
+//                Label("Add Visit", systemImage: "plus")
+//            }
 
-            if spot.visitCount > 0 {
-                Divider()
-                
-                Button {
-                    onDecrement()
-                } label: {
-                    Label("Remove Visit", systemImage: "minus")
-                }
-                
-                Button(role: .destructive) {
-                    onReset()
-                } label: {
-                    Label("Reset Visits", systemImage: "arrow.counterclockwise")
-                }
-            }
+//            if spot.visitCount > 0 {
+//                Divider()
+//                
+//                Button {
+//                    onDecrement()
+//                } label: {
+//                    Label("Remove Visit", systemImage: "minus")
+//                }
+//                
+//                Button(role: .destructive) {
+//                    onReset()
+//                } label: {
+//                    Label("Reset Visits", systemImage: "arrow.counterclockwise")
+//                }
+//            }
             
-            Divider()
+//            Divider()
             
             Button {
                 onEdit()

@@ -24,9 +24,10 @@ struct SpotListView: View {
     @State private var collectionToEdit: SpotCollection? = nil
     @State private var spotToDelete: Spot? = nil
     @State private var showingDeleteConfirmation = false
-    @State private var selectedTab: SpotTab = .notVisited
+//    @State private var selectedTab: SpotTab = .notVisited
     
     @State private var itemToShare: ShareableContent? = nil
+    
 
 
     // MARK: - Filtering & Sorting State
@@ -37,7 +38,7 @@ struct SpotListView: View {
     @State private var collectionFilterState: CollectionFilterState = .all
     
     // State to control side menu presentation
-    @State private var showingSideMenu: Bool = false
+    @State private var showingSettingsSheet: Bool = false // <-- ADD THIS
     
     // MARK: - Geofencing State
     @State private var hasInitializedGeofences = false
@@ -50,13 +51,13 @@ struct SpotListView: View {
         )
     }
     
-    private var notVisitedSpots: [Spot] {
-        displayedSpots.filter { $0.visitCount == 0 }
-    }
-
-    private var visitedSpots: [Spot] {
-        displayedSpots.filter { $0.visitCount > 0 }
-    }
+//    private var notVisitedSpots: [Spot] {
+//        displayedSpots.filter { $0.visitCount == 0 }
+//    }
+//
+//    private var visitedSpots: [Spot] {
+//        displayedSpots.filter { $0.visitCount > 0 }
+//    }
 
     enum SortOrder: String, CaseIterable, Identifiable {
         case dateDescending = "Newest First"
@@ -67,10 +68,10 @@ struct SpotListView: View {
         case distanceAscending = "Distance (Nearest)"
         var id: String { self.rawValue }
     }
-    enum SpotTab {
-        case notVisited
-        case visited
-    }
+//    enum SpotTab {
+//        case notVisited
+//        case visited
+//    }
     
     enum CollectionFilterState: String, CaseIterable {
         case all = "All Spots"
@@ -192,20 +193,14 @@ struct SpotListView: View {
                             .environmentObject(navigationViewModel)
                     }
                 }
-                .sheet(isPresented: $showingSideMenu) {
-                    SideMenuView(
-                        selectedCollectionFilterId: $selectedCollectionFilterId,
-                        onDismiss: { showingSideMenu = false }
-                    )
-                    .environmentObject(collectionViewModel)
-                    .environmentObject(spotsViewModel)
-                    .environmentObject(authViewModel)
-                    .environmentObject(locationManager)
-                    .environmentObject(navigationViewModel)
-                }
         
                 .sheet(item: $itemToShare) { item in
                     ShareSheet(items: [item.text, item.url])
+                }
+                .sheet(isPresented: $showingSettingsSheet) {
+                    SettingsView(
+                        onDismiss: { showingSettingsSheet = false }
+                    ) // This presents the settings screen
                 }
 
         // Stage 2: Apply lifecycle and onChange modifiers
@@ -307,11 +302,13 @@ struct SpotListView: View {
         if spotsViewModel.isLoading && spotsViewModel.spots.isEmpty {
             loadingStateView()
         } else if displayedSpots.isEmpty && spotsViewModel.spots.isEmpty && !spotsViewModel.isLoading {
-             emptyStateView(description: "Looks a bit empty here! Tap the '+' button to add your first memorable SweetSpot.")
+             emptyStateView(description: "Looks a bit empty here! Tap the '+' button to add your first SweetSpot.")
         } else if displayedSpots.isEmpty {
             emptyStateView(description: emptyStateDescriptionForFilters())
         } else {
-            spotsScrollView()
+            Spacer()
+            spotList(for: displayedSpots)
+//            spotsScrollView()
         }
     }
 
@@ -332,27 +329,27 @@ struct SpotListView: View {
         )
     }
     
-    private func spotsScrollView() -> some View {
-        VStack(spacing: 0) {
-            // 1. The Top Menu Bar (Segmented Picker)
-            Picker("Spots", selection: $selectedTab.animation()) {
-                Text("Bucket List (\(notVisitedSpots.count))").tag(SpotTab.notVisited)
-                Text("Visited (\(visitedSpots.count))").tag(SpotTab.visited)
-            }
-            .pickerStyle(.segmented)
-            .padding()
-
-            // 2. The TabView that holds the lists
-            TabView(selection: $selectedTab) {
-                spotList(for: notVisitedSpots)
-                    .tag(SpotTab.notVisited)
-
-                spotList(for: visitedSpots)
-                    .tag(SpotTab.visited)
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-        }
-    }
+//    private func spotsScrollView() -> some View {
+//        VStack(spacing: 0) {
+//            // 1. The Top Menu Bar (Segmented Picker)
+//            Picker("Spots", selection: $selectedTab.animation()) {
+//                Text("Bucket List (\(notVisitedSpots.count))").tag(SpotTab.notVisited)
+//                Text("Visited (\(visitedSpots.count))").tag(SpotTab.visited)
+//            }
+//            .pickerStyle(.segmented)
+//            .padding()
+//
+//            // 2. The TabView that holds the lists
+//            TabView(selection: $selectedTab) {
+//                spotList(for: notVisitedSpots)
+//                    .tag(SpotTab.notVisited)
+//
+//                spotList(for: visitedSpots)
+//                    .tag(SpotTab.visited)
+//            }
+//            .tabViewStyle(.page(indexDisplayMode: .never))
+//        }
+//    }
 
     // Helper view to avoid duplicating the list code
     @ViewBuilder
@@ -366,14 +363,14 @@ struct SpotListView: View {
                             userLocation: locationManager.userLocation,
                             onEdit: { editSpot(spot) },
                             onDelete: { requestDeleteConfirmation(for: spot) },
-                            onIncrement: { handleIncrement(for: spot) }, // Updated
-                            onDecrement: { spotsViewModel.decrementVisitCount(for: spot) },
-                            onReset: {
-                                    withAnimation {
-                                        selectedTab = .notVisited
-                                    }
-                                    spotsViewModel.resetVisitCount(for: spot)
-                                },
+//                            onIncrement: { handleIncrement(for: spot) }, // Updated
+//                            onDecrement: { spotsViewModel.decrementVisitCount(for: spot) },
+//                            onReset: {
+//                                    withAnimation {
+//                                        selectedTab = .notVisited
+//                                    }
+//                                    spotsViewModel.resetVisitCount(for: spot)
+//                                },
                             
                             
                             onShare: {
@@ -429,31 +426,32 @@ struct SpotListView: View {
         }
     }
     
-    private func handleIncrement(for spot: Spot) {
-        // Check if this is the FIRST visit
-        if spot.visitCount == 0 {
-            // If so, switch to the "Visited" tab with an animation
-            withAnimation {
-                selectedTab = .visited
-            }
-        }
-        // Then, call the ViewModel to increment the count as before
-        spotsViewModel.incrementVisitCount(for: spot)
-    }
+//    private func handleIncrement(for spot: Spot) {
+//        // Check if this is the FIRST visit
+//        if spot.visitCount == 0 {
+//            // If so, switch to the "Visited" tab with an animation
+//            withAnimation {
+//                selectedTab = .visited
+//            }
+//        }
+//        // Then, call the ViewModel to increment the count as before
+//        spotsViewModel.incrementVisitCount(for: spot)
+//    }
     
     // MARK: - Toolbar
     @ToolbarContentBuilder
     private func navigationToolbarItems() -> some ToolbarContent {
-        ToolbarItemGroup(placement: .navigationBarLeading) {
+        ToolbarItemGroup(placement: .navigationBarTrailing) {
+            
             Button {
-                showingSideMenu = true
+                showingAddSheet = true
             } label: {
-                Image(systemName: "line.3.horizontal")
+                Image(systemName: "plus")
                     .foregroundStyle(Color.themePrimary)
             }
-        }
-        ToolbarItemGroup(placement: .navigationBarTrailing) {
+            
             sortMenu()
+            
             Button {
                 showingFilterPopover = true
             } label: {
@@ -464,13 +462,16 @@ struct SpotListView: View {
             .popover(isPresented: $showingFilterPopover) {
                 FilterMenuView(
                     collectionFilterState: $collectionFilterState,
-                    selectedCategoryFilters: $selectedCategoryFilters
+                    selectedCategoryFilters: $selectedCategoryFilters,
+                    showCollectionFilterOptions: true // <-- Show the options here
                 )
+                .presentationCompactAdaptation(.popover) // Ensures it looks good on iPhone
             }
+            
             Button {
-                showingAddSheet = true
+                showingSettingsSheet = true
             } label: {
-                Image(systemName: "plus")
+                Label("Settings", systemImage: "gearshape")
                     .foregroundStyle(Color.themePrimary)
             }
         }
@@ -480,7 +481,7 @@ struct SpotListView: View {
     private func initialLoadTasks() {
         if let userId = authViewModel.userSession?.uid,
            collectionViewModel.collections.isEmpty && !collectionViewModel.isLoading {
-            collectionViewModel.fetchCollections(userId: userId)
+            collectionViewModel.listenForCollections(userId: userId)
         }
 
         // Handle Location Permission Request
@@ -675,14 +676,14 @@ struct SpotCardView: View {
     let userLocation: CLLocation?
     let onEdit: () -> Void
     let onDelete: () -> Void
-    let onIncrement: () -> Void
-    let onDecrement: () -> Void
-    let onReset: () -> Void
+//    let onIncrement: () -> Void
+//    let onDecrement: () -> Void
+//    let onReset: () -> Void
     let onShare: () -> Void
 
     @State private var locationDisplay: (icon: String, text: String)?
-    @State private var showUndoBanner = false
-    @State private var undoTimer: Timer? = nil
+//    @State private var showUndoBanner = false
+//    @State private var undoTimer: Timer? = nil
     @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
@@ -723,15 +724,15 @@ struct SpotCardView: View {
                                 .lineLimit(1)
                         }
                         
-                        if spot.visitCount > 0 {
-                            Text("Visited: \(spot.visitCount)")
-                                .font(.caption2)
-                                .foregroundStyle(Color.themeAccent)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
-                                .background(Color.themeAccent.opacity(0.1))
-                                .clipShape(Capsule())
-                        }
+//                        if spot.visitCount > 0 {
+//                            Text("Visited: \(spot.visitCount)")
+//                                .font(.caption2)
+//                                .foregroundStyle(Color.themeAccent)
+//                                .padding(.horizontal, 6)
+//                                .padding(.vertical, 3)
+//                                .background(Color.themeAccent.opacity(0.1))
+//                                .clipShape(Capsule())
+//                        }
                     }
                 }
                 .padding(.vertical, 10)
@@ -743,9 +744,9 @@ struct SpotCardView: View {
                     spot: spot,
                     onEdit: onEdit,
                     onDelete: onDelete,
-                    onIncrement: onIncrement,
-                    onDecrement: onDecrement,
-                    onReset: onReset,
+//                    onIncrement: onIncrement,
+//                    onDecrement: onDecrement,
+//                    onReset: onReset,
                     onShare: onShare
                 )
                 .padding(.trailing, 6)
@@ -772,39 +773,39 @@ struct SpotCardView: View {
             }
 
             // Undo Popup
-            if showUndoBanner {
-                HStack {
-                    Text("Marked as visited")
-                    Spacer()
-                    Button("Undo") {
-                        onDecrement()
-                        undoTimer?.invalidate()
-                        showUndoBanner = false
-                    }
-                }
-                .font(.footnote)
-                .foregroundStyle(Color.white)
-                .padding()
-                .background(Color.black.opacity(0.9))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .padding(.horizontal, 12)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .animation(.easeInOut, value: showUndoBanner)
-            }
+//            if showUndoBanner {
+//                HStack {
+//                    Text("Marked as visited")
+//                    Spacer()
+//                    Button("Undo") {
+//                        onDecrement()
+//                        undoTimer?.invalidate()
+//                        showUndoBanner = false
+//                    }
+//                }
+//                .font(.footnote)
+//                .foregroundStyle(Color.white)
+//                .padding()
+//                .background(Color.black.opacity(0.9))
+//                .clipShape(RoundedRectangle(cornerRadius: 10))
+//                .padding(.horizontal, 12)
+//                .transition(.move(edge: .bottom).combined(with: .opacity))
+//                .animation(.easeInOut, value: showUndoBanner)
+//            }
         }
     }
 
-    private func showUndoPopupTemporarily() {
-        withAnimation {
-            showUndoBanner = true
-        }
-        undoTimer?.invalidate()
-        undoTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: false) { _ in
-            withAnimation {
-                showUndoBanner = false
-            }
-        }
-    }
+//    private func showUndoPopupTemporarily() {
+//        withAnimation {
+//            showUndoBanner = true
+//        }
+//        undoTimer?.invalidate()
+//        undoTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: false) { _ in
+//            withAnimation {
+//                showUndoBanner = false
+//            }
+//        }
+//    }
     
     private func updateLocationDisplay() async {
         // Guard against no user location

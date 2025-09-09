@@ -42,7 +42,7 @@ private struct SelectableSpotRow: View {
     }
     
     // This helper can be moved from SpotCardView or duplicated here
-    private func colorFromString(_ colorName: String) -> Color {
+    public func colorFromString(_ colorName: String) -> Color {
         switch colorName {
         case "orange": return .orange
         case "green": return .green

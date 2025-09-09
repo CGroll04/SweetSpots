@@ -31,12 +31,15 @@ struct EditCollectionView: View {
     @State private var showDeleteConfirmation: Bool = false
     @State private var isProcessing: Bool = false
     @State private var alertInfo: EditCollectionAlertInfo? = nil
+    @State private var isPublic: Bool // <-- Add this state variable
+
 
     init(collection: SpotCollection) {
         self.collection = collection // Store the initial collection
         // Initialize @State properties for editing based on the passed-in collection
         _editableName = State(initialValue: collection.name)
         _editableDescription = State(initialValue: collection.descriptionText ?? "")
+        _isPublic = State(initialValue: collection.isPublic) // <-- Initialize it
     }
 
     var body: some View {
@@ -56,6 +59,13 @@ struct EditCollectionView: View {
                             .border(Color.gray.opacity(0.2), width: 1) // Optional: visual cue
                             .disabled(isProcessing)
                     }
+                }
+                
+                Section("Sharing") {
+                    Toggle("Publicly Shareable Link", isOn: $isPublic)
+                    Text("Anyone with the link can view this collection. Turn this off to disable any previously shared links.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section {
@@ -140,8 +150,10 @@ struct EditCollectionView: View {
         let nameChanged = trimmedName != collection.name
         
         let descriptionChanged = trimmedDescription != (collection.descriptionText ?? "")
+        
+        let sharingChanged = isPublic != collection.isPublic
 
-        return nameChanged || descriptionChanged
+        return nameChanged || descriptionChanged || sharingChanged
     }
 
     private func saveChanges() {
@@ -167,6 +179,7 @@ struct EditCollectionView: View {
         var updatedCollection = self.collection // Start with the original to preserve ID, userId, createdAt
         updatedCollection.name = trimmedName
         updatedCollection.descriptionText = editableDescription.trimmedSafe().isEmpty ? nil : editableDescription.trimmedSafe()
+        updatedCollection.isPublic = self.isPublic // <-- Add this line to save the toggle's state
         
         collectionViewModel.updateCollection(updatedCollection) { result in
             isProcessing = false

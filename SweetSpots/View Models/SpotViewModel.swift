@@ -425,7 +425,7 @@ class SpotViewModel: ObservableObject {
                spot1.collectionIds == spot2.collectionIds &&
                spot1.wantsNearbyNotification == spot2.wantsNearbyNotification &&
                abs(spot1.notificationRadiusMeters - spot2.notificationRadiusMeters) < 0.1 &&
-               spot1.visitCount == spot2.visitCount &&
+//               spot1.visitCount == spot2.visitCount &&
                spot1.createdAt?.dateValue() == spot2.createdAt?.dateValue()
     }
     
@@ -433,58 +433,58 @@ class SpotViewModel: ObservableObject {
         return spots.first { $0.id == spotId }
     }
     
-    func incrementVisitCount(for spot: Spot) {
-        guard let spotId = spot.id else { return }
-        
-        // This atomically adds 1 to the value on the server.
-        // We no longer change the local `spots` array here.
-        userSpotsCollection(userId: spot.userId)
-            .document(spotId)
-            .updateData(["visitCount": FieldValue.increment(Int64(1))])
-    }
-
-    func decrementVisitCount(for spot: Spot) {
-        guard let spotId = spot.id, spot.visitCount > 0 else { return }
-        
-        // This atomically subtracts 1 from the value on the server.
-        // We no longer change the local `spots` array here.
-        userSpotsCollection(userId: spot.userId)
-            .document(spotId)
-            .updateData(["visitCount": FieldValue.increment(Int64(-1))])
-    }
-    
-    func resetVisitCount(for spot: Spot) {
-        guard let spotId = spot.id else {
-            print("SpotViewModel: Cannot reset visitCount – spot has no ID.")
-            return
-        }
-
-        // Only reset if the spot has been visited
-        guard spot.visitCount > 0 else {
-            print("SpotViewModel: visitCount is already 0, no need to reset.")
-            return
-        }
-
-        userSpotsCollection(userId: spot.userId)
-            .document(spotId)
-            .updateData(["visitCount": 0]) { [weak self] error in
-                Task { @MainActor in
-                    guard let self = self else { return }
-                    if let error = error {
-                        // This now USES the error object, fixing the warning
-                        print("ERROR: Failed to reset visit count: \(error.localizedDescription)")
-                        self.errorMessage = "Could not reset visit count."
-                    } else {
-                        // This is the success case
-                        if let index = self.spots.firstIndex(where: { $0.id == spotId }) {
-                            withAnimation {
-                                self.spots[index].visitCount = 0
-                            }
-                        }
-                    }
-                }
-            }
-    }
+//    func incrementVisitCount(for spot: Spot) {
+//        guard let spotId = spot.id else { return }
+//        
+//        // This atomically adds 1 to the value on the server.
+//        // We no longer change the local `spots` array here.
+//        userSpotsCollection(userId: spot.userId)
+//            .document(spotId)
+//            .updateData(["visitCount": FieldValue.increment(Int64(1))])
+//    }
+//
+//    func decrementVisitCount(for spot: Spot) {
+//        guard let spotId = spot.id, spot.visitCount > 0 else { return }
+//        
+//        // This atomically subtracts 1 from the value on the server.
+//        // We no longer change the local `spots` array here.
+//        userSpotsCollection(userId: spot.userId)
+//            .document(spotId)
+//            .updateData(["visitCount": FieldValue.increment(Int64(-1))])
+//    }
+//    
+//    func resetVisitCount(for spot: Spot) {
+//        guard let spotId = spot.id else {
+//            print("SpotViewModel: Cannot reset visitCount – spot has no ID.")
+//            return
+//        }
+//
+//        // Only reset if the spot has been visited
+//        guard spot.visitCount > 0 else {
+//            print("SpotViewModel: visitCount is already 0, no need to reset.")
+//            return
+//        }
+//
+//        userSpotsCollection(userId: spot.userId)
+//            .document(spotId)
+//            .updateData(["visitCount": 0]) { [weak self] error in
+//                Task { @MainActor in
+//                    guard let self = self else { return }
+//                    if let error = error {
+//                        // This now USES the error object, fixing the warning
+//                        print("ERROR: Failed to reset visit count: \(error.localizedDescription)")
+//                        self.errorMessage = "Could not reset visit count."
+//                    } else {
+//                        // This is the success case
+//                        if let index = self.spots.firstIndex(where: { $0.id == spotId }) {
+//                            withAnimation {
+//                                self.spots[index].visitCount = 0
+//                            }
+//                        }
+//                    }
+//                }
+//            }
+//    }
     func forceRefresh(userId: String) {
         print("SpotViewModel: Force refresh requested")
         stopListeningAndClearData()
