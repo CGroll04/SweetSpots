@@ -7,6 +7,9 @@
 
 import SwiftUI
 
+/// A view that allows the user to resolve a conflict when importing a spot that already exists.
+///
+/// The user's choice is communicated back to the parent view via the `importableSpot` binding.
 struct ConflictResolutionView: View {
     @Binding var importableSpot: ImportableSpot
     @Environment(\.dismiss) private var dismiss
@@ -74,7 +77,7 @@ struct ConflictResolutionView: View {
         }
     }
     
-    // Helper for creating the choice buttons
+    /// A helper view builder for creating the styled resolution choice buttons.
     private func resolveButton(title: String, subtitle: String, icon: String, resolution: ConflictResolution) -> some View {
         Button(action: {
             importableSpot.state = .resolved(resolution: resolution)

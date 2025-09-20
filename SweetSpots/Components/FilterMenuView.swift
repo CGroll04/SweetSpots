@@ -1,5 +1,5 @@
 //
-//  FilterPopoverView.swift
+//  FilterMenuView.swift
 //  SweetSpots
 //
 //  Created by Charlie Groll on 2025-07-20.
@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+/// A popover menu view that provides options for filtering a list of spots by collection status and category.
 struct FilterMenuView: View {
     // Bindings to control the parent view's state
     @Binding var collectionFilterState: SpotListView.CollectionFilterState
@@ -18,7 +19,6 @@ struct FilterMenuView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Section 1: Collection Filtering
             if showCollectionFilterOptions {
-                // Section 1: Collection Filtering
                 filterSection(title: "Show Spots") {
                     collectionToggleButton(for: .all, title: "All Spots", icon: "square.stack.3d.up")
                     collectionToggleButton(for: .inCollection, title: "In Collections", icon: "folder.fill")
@@ -41,7 +41,7 @@ struct FilterMenuView: View {
         .frame(width: 280) // A good width for a popover menu
     }
     
-    // A generic view for section headers
+    /// A view builder for creating a standardized filter section with a title.
     @ViewBuilder
     private func filterSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
         Text(title.uppercased())
@@ -52,7 +52,7 @@ struct FilterMenuView: View {
         content()
     }
     
-    // Button for the Collection Filter State
+    /// A view builder for a toggle button that controls the collection filter state.
     private func collectionToggleButton(for state: SpotListView.CollectionFilterState, title: String, icon: String) -> some View {
         Button(action: {
             collectionFilterState = state
@@ -72,7 +72,7 @@ struct FilterMenuView: View {
         .buttonStyle(.plain)
     }
 
-    // Button for the Category Filter
+    /// A view builder for a toggle button that controls the category filter set.
     private func categoryToggleButton(for category: SpotCategory?) -> some View {
         Button(action: {
             if let categoryToToggle = category {
@@ -93,7 +93,7 @@ struct FilterMenuView: View {
                 }
                 Spacer()
                 
-                let isSelected = (category == nil && selectedCategoryFilters.isEmpty) || (category != nil && selectedCategoryFilters.contains(category!))
+                let isSelected = isCategorySelected(category)
                 if isSelected {
                     Image(systemName: "checkmark")
                         .foregroundStyle(Color.accentColor)
@@ -104,5 +104,15 @@ struct FilterMenuView: View {
             .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
+    }
+    
+    private func isCategorySelected(_ category: SpotCategory?) -> Bool {
+        if let category {
+            // This is a specific category row, so it's selected if it's in the set.
+            return selectedCategoryFilters.contains(category)
+        } else {
+            // This is the "All Categories" row, so it's selected if the set is empty.
+            return selectedCategoryFilters.isEmpty
+        }
     }
 }

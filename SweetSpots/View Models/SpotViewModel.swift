@@ -6,48 +6,52 @@
 //
 
 import SwiftUI
-import FirebaseFirestore
+@preconcurrency import FirebaseFirestore
 import CoreLocation
 import FirebaseAuth
-import Combine // <-- Make sure to import Combine
-
+import Combine
+import os.log
 
 @MainActor
 class SpotViewModel: ObservableObject {
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "SpotViewModel")
+
     // MARK: - Published Properties
     @Published var spots: [Spot] = []
     @Published var errorMessage: String?
     @Published var isLoading: Bool = false
     @Published var recentlyDeletedSpots: [Spot] = []
     @Published var userSession: FirebaseAuth.User?
-
     
     private var suppressedUndoSpotIds: Set<String> = []
 
     // MARK: - Private Properties
     private let db = Firestore.firestore()
     private var spotsListenerRegistration: ListenerRegistration?
-    private var deletedSpotsListenerRegistration: ListenerRegistration?
-    private var cancellables = Set<AnyCancellable>() // For listening to auth changes
+    private var cancellables = Set<AnyCancellable>()
 
     init(authViewModel: AuthViewModel) {
-            // Subscribe to the userSession publisher from the AuthViewModel
-            authViewModel.$userSession
-                .sink { [weak self] session in
-                    self?.userSession = session
-                    
-                    // If the user logs in, fetch their spots.
-                    // If they log out (session is nil), clear the data.
-                    if let user = session {
-                        self?.listenForSpots(userId: user.uid)
-                    } else {
-                        self?.stopListeningAndClearData()
-                    }
+        // Subscribe to the userSession publisher from the AuthViewModel
+        authViewModel.$userSession
+            .sink { [weak self] session in
+                self?.userSession = session
+                self?.logger.info("User session changed. User is now \(session == nil ? "logged out" : "logged in").")
+                
+                // If the user logs in, fetch their spots.
+                // If they log out (session is nil), clear the data.
+                if let user = session {
+                    self?.logger.info("Initializing spots listener for user ID: \(user.uid)")
+                    self?.listenForSpots(userId: user.uid)
+                } else {
+                    self?.logger.info("User logged out, clearing spot data.")
+                    self?.stopListeningAndClearData()
                 }
-                .store(in: &cancellables)
-        }
+            }
+            .store(in: &cancellables)
+    }
 
     deinit {
+        logger.debug("SpotViewModel deinitialized, listener removed.")
         spotsListenerRegistration?.remove()
     }
 
@@ -57,48 +61,58 @@ class SpotViewModel: ObservableObject {
     }
 
     // MARK: - Data Fetching
+    /// Establishes a real-time listener for all of a user's spots (both active and soft-deleted).
     func listenForSpots(userId: String) {
         guard !userId.isEmpty else {
+            logger.error("Cannot listen for spots: User ID is missing.")
             self.errorMessage = "User ID is missing."
             return
         }
         isLoading = true
-        spotsListenerRegistration?.remove() // We only need one listener for this approach
+        spotsListenerRegistration?.remove()
 
-        // Fetch ALL spots, regardless of their deleted status
         userSpotsCollection(userId: userId)
             .order(by: "createdAt", descending: true)
             .addSnapshotListener { [weak self] querySnapshot, error in
                 Task { @MainActor in
-                    guard let self = self, let documents = querySnapshot?.documents else {
-                        self?.isLoading = false
+                    guard let self = self else { return }
+                    
+                    if let error = error {
+                        self.logger.error("Error fetching spots: \(error.localizedDescription)")
+                        self.errorMessage = "Error fetching spots: \(error.localizedDescription)"
+                        self.isLoading = false
                         return
                     }
                     
-                    // Decode all documents into one big array, ensuring the ID is always set
+                    guard let documents = querySnapshot?.documents else {
+                        self.logger.info("Snapshot returned no documents.")
+                        self.isLoading = false
+                        return
+                    }
+                    
                     let allSpots = documents.compactMap { document -> Spot? in
                         do {
-                            // STEP 1: Decode the spot data
                             var spot = try document.data(as: Spot.self)
-                            // STEP 2: Manually assign the document ID
                             spot.id = document.documentID
                             return spot
                         } catch {
-                            print("Failed to decode spot \(document.documentID): \(error)")
+                            self.logger.warning("Failed to decode spot \(document.documentID): \(error.localizedDescription)")
                             return nil
                         }
                     }
                     
-                    // Now, filter them into the correct arrays on the client side
                     self.spots = allSpots.filter { $0.deletedAt == nil }
                     self.recentlyDeletedSpots = allSpots.filter { $0.deletedAt != nil }
                     
+                    self.logger.info("Spot listener updated. Loaded \(self.spots.count) active and \(self.recentlyDeletedSpots.count) deleted spots.")
                     self.isLoading = false
                 }
             }
     }
 
     // MARK: - Data Modification
+    
+    /// Adds a single new spot to Firestore.
     func addSpot(
         spotData: Spot,
         completion: @escaping (Result<String, Error>) -> Void
@@ -116,7 +130,7 @@ class SpotViewModel: ObservableObject {
         spotToAdd.websiteURL = spotToAdd.websiteURL?.trimmed()
         
         var forFirestore = spotToAdd
-        forFirestore.createdAt = nil
+        forFirestore.createdAt = nil // Let the server set the timestamp
         var newDocumentRef: DocumentReference?
         
         do {
@@ -126,35 +140,37 @@ class SpotViewModel: ObservableObject {
                     
                     if let error = error {
                         self.isLoading = false
+                        self.logger.error("Failed to add spot to Firestore: \(error.localizedDescription)")
                         self.errorMessage = "Failed to add spot: \(error.localizedDescription)"
                         completion(.failure(error))
                     } else {
                         if let docId = newDocumentRef?.documentID {
-                            // This prevents potential race conditions and ensures consistency
-                            print("SpotViewModel: Spot '\(spotToAdd.name)' added successfully. ID: \(docId). Firestore listener will update the local array.")
-                            
+                            self.logger.info("Spot '\(spotToAdd.name)' added successfully. ID: \(docId).")
                             self.isLoading = false
                             completion(.success(docId))
                         } else {
                             self.isLoading = false
-                            self.errorMessage = "Failed to get document ID after adding spot."
-                            completion(.failure(SpotError.unknown))
+                            let error = SpotError.unknown
+                            self.logger.error("Failed to get document ID after adding spot.")
+                            self.errorMessage = error.errorDescription
+                            completion(.failure(error))
                         }
                     }
                 }
             }
         } catch {
             self.isLoading = false
+            self.logger.error("Error preparing spot data for save: \(error.localizedDescription)")
             self.errorMessage = "Error preparing spot data for save: \(error.localizedDescription)"
             completion(.failure(error))
         }
     }
     
+    /// Adds multiple spots to a collection in a single batch operation.
     func addSpotsToCollection(spotIDs: Set<String>, toCollection collectionId: String) {
         guard !spotIDs.isEmpty, let userId = self.userSession?.uid else { return }
 
         let batch = db.batch()
-        // CORRECTED: Use the helper function for the correct path
         let spotsRef = userSpotsCollection(userId: userId)
 
         for spotId in spotIDs {
@@ -163,18 +179,20 @@ class SpotViewModel: ObservableObject {
         }
 
         batch.commit { error in
-            if let error = error {
-                print("Error adding spots to collection: \(error.localizedDescription)")
-                self.errorMessage = "Failed to add spots to collection."
-            } else {
-                print("Successfully added \(spotIDs.count) spots to collection.")
+            Task { @MainActor in
+                if let error = error {
+                    self.logger.error("Error adding \(spotIDs.count) spots to collection \(collectionId): \(error.localizedDescription)")
+                    self.errorMessage = "Failed to add spots to collection."
+                } else {
+                    self.logger.info("Successfully added \(spotIDs.count) spots to collection \(collectionId).")
+                }
             }
         }
     }
     
+    /// Adds multiple new spots to Firestore in a single batch operation.
     func addMultipleSpots(_ spots: [Spot], completion: @escaping (Result<Void, Error>) -> Void) {
         guard let firstSpot = spots.first else {
-            // Nothing to save, so we're successful.
             completion(.success(()))
             return
         }
@@ -182,46 +200,43 @@ class SpotViewModel: ObservableObject {
         let userId = firstSpot.userId
         let batch = db.batch()
 
-        // We create a temporary array to hold the new spots with their final IDs
-        var spotsWithIDs: [Spot] = []
-
         for var spot in spots {
             let docRef = userSpotsCollection(userId: userId).document()
-            spot.id = docRef.documentID // Assign the new ID
+            spot.id = docRef.documentID
             
-            // Add the operation to the batch
             do {
                 try batch.setData(from: spot, forDocument: docRef)
-                spotsWithIDs.append(spot) // Keep track of the final spot data
             } catch {
-                completion(.failure(SpotError.encodingError(description: error.localizedDescription)))
+                let spotError = SpotError.encodingError(description: error.localizedDescription)
+                Task { @MainActor in
+                    self.logger.error("Failed to encode spot '\(spot.name)' for batch write: \(spotError.localizedDescription)")
+                    self.errorMessage = "Failed to save spots: \(spotError.localizedDescription)"
+                    completion(.failure(spotError))
+                }
                 return
             }
         }
 
-        // Commit the batch
         batch.commit { error in
-            // Because the ViewModel is @MainActor, this closure is on the main thread.
-            if let error = error {
-                print("ERROR: Batch write failed: \(error.localizedDescription)")
-                self.errorMessage = "Failed to save spots: \(error.localizedDescription)"
-                completion(.failure(error))
-            } else {
-                print("SUCCESS: Batch write of \(spots.count) spots completed.")
-                self.errorMessage = nil
-                completion(.success(()))
+            Task { @MainActor in
+                if let error = error {
+                    self.logger.error("Batch write of \(spots.count) spots failed: \(error.localizedDescription)")
+                    self.errorMessage = "Failed to save spots: \(error.localizedDescription)"
+                    completion(.failure(error))
+                } else {
+                    self.logger.info("Batch write of \(spots.count) spots completed successfully.")
+                    self.errorMessage = nil
+                    completion(.success(()))
+                }
             }
         }
     }
-    
-    // In SpotViewModel.swift
 
     /// Removes a specific collection ID from the `collectionIds` array for multiple spots.
     func removeSpotsFromCollection(spotIDs: Set<String>, fromCollection collectionId: String) {
         guard !spotIDs.isEmpty, let userId = self.userSession?.uid else { return }
 
         let batch = db.batch()
-        // CORRECTED: Use the helper function for the correct path
         let spotsRef = userSpotsCollection(userId: userId)
 
         for spotId in spotIDs {
@@ -230,37 +245,45 @@ class SpotViewModel: ObservableObject {
         }
 
         batch.commit { error in
-            if let error = error {
-                print("Error removing spots from collection: \(error.localizedDescription)")
-                self.errorMessage = "Failed to remove spots from collection."
-            } else {
-                print("Successfully removed \(spotIDs.count) spots from collection.")
+            Task { @MainActor in
+                if let error = error {
+                    self.logger.error("Error removing \(spotIDs.count) spots from collection \(collectionId): \(error.localizedDescription)")
+                    self.errorMessage = "Failed to remove spots from collection."
+                } else {
+                    self.logger.info("Successfully removed \(spotIDs.count) spots from collection \(collectionId).")
+                }
             }
         }
     }
     
+    /// Deletes expired temporary share documents created by the user.
     func performShareCleanup(for userId: String) {
-        print("Performing share cleanup for user: \(userId)")
+        logger.info("Performing share cleanup for user: \(userId)")
 
         let db = Firestore.firestore()
         let now = Timestamp()
 
-        // Create a query for shares created by this user that have expired
         db.collection("shares")
             .whereField("creatorUid", isEqualTo: userId)
             .whereField("expiresAt", isLessThan: now)
             .getDocuments { snapshot, error in
                 if let error = error {
-                    print("Error getting expired shares: \(error.localizedDescription)")
+                    Task { @MainActor in
+                        self.logger.error("Error getting expired shares: \(error.localizedDescription)")
+                    }
                     return
                 }
 
                 guard let documents = snapshot?.documents, !documents.isEmpty else {
-                    print("No expired shares to clean up for this user.")
+                    Task { @MainActor in
+                        self.logger.info("No expired shares to clean up for this user.")
+                    }
                     return
                 }
 
-                print("Found \(documents.count) expired shares to delete.")
+                Task { @MainActor in
+                    self.logger.info("Found \(documents.count) expired shares to delete.")
+                }
                 let batch = db.batch()
                 documents.forEach { doc in
                     batch.deleteDocument(doc.reference)
@@ -268,14 +291,19 @@ class SpotViewModel: ObservableObject {
 
                 batch.commit { err in
                     if let err = err {
-                        print("Error deleting expired shares: \(err.localizedDescription)")
+                        Task { @MainActor in
+                            self.logger.error("Error deleting expired shares: \(err.localizedDescription)")
+                        }
                     } else {
-                        print("Successfully cleaned up expired shares.")
+                        Task { @MainActor in
+                            self.logger.info("Successfully cleaned up expired shares.")
+                        }
                     }
                 }
             }
     }
     
+    /// Updates an existing spot in Firestore.
     func updateSpot(_ spotToUpdate: Spot, completion: @escaping (Result<Void, Error>) -> Void) {
         guard let spotId = spotToUpdate.id else {
             completion(.failure(SpotError.missingSpotID))
@@ -292,7 +320,6 @@ class SpotViewModel: ObservableObject {
         }
         finalSpotToUpdate.phoneNumber = finalSpotToUpdate.phoneNumber?.trimmed()
         finalSpotToUpdate.websiteURL = finalSpotToUpdate.websiteURL?.trimmed()
-
         
         do {
             try userSpotsCollection(userId: finalSpotToUpdate.userId).document(spotId).setData(from: finalSpotToUpdate, merge: true) { [weak self] error in
@@ -301,33 +328,24 @@ class SpotViewModel: ObservableObject {
                     self.isLoading = false
                     
                     if let error = error {
+                        self.logger.error("Failed to update spot '\(finalSpotToUpdate.name)': \(error.localizedDescription)")
                         self.errorMessage = "Failed to update spot: \(error.localizedDescription)"
                         completion(.failure(error))
                     } else {
-                        // The database write was successful. Now, update our local data to match.
-                        
-                        if let index = self.spots.firstIndex(where: { $0.id == spotId }) {
-                            self.spots[index] = finalSpotToUpdate
-                            print("SpotViewModel: Successfully updated '\(finalSpotToUpdate.name)' in local array.")
-                        } else {
-                            // This case is unlikely but good to handle.
-                            // It means the spot was updated but wasn't in our local list,
-                            // so we can add it. Or just log it.
-                            print("SpotViewModel: Spot with ID \(spotId) was updated in Firestore but not found in the local array.")
-                            // Optionally, you could append it: self.spots.append(finalSpotToUpdate)
-                        }
-                        
+                        self.logger.info("Successfully updated spot '\(finalSpotToUpdate.name)' in Firestore.")
                         completion(.success(()))
                     }
                 }
             }
         } catch {
             self.isLoading = false
+            self.logger.error("Failed to encode spot data for update: \(error.localizedDescription)")
             self.errorMessage = "Error preparing spot data for update: \(error.localizedDescription)"
             completion(.failure(error))
         }
     }
 
+    /// Soft-deletes a spot by setting its `deletedAt` timestamp.
     func deleteSpot(_ spotToDelete: Spot, completion: @escaping (Result<Void, Error>) -> Void) {
         guard let spotId = spotToDelete.id else {
             completion(.failure(SpotError.missingSpotID))
@@ -338,157 +356,99 @@ class SpotViewModel: ObservableObject {
         userSpotsCollection(userId: spotToDelete.userId).document(spotId).updateData(updateData) { error in
             Task { @MainActor in
                 if let error = error {
+                    self.logger.error("Failed to soft-delete spot '\(spotToDelete.name)': \(error.localizedDescription)")
                     completion(.failure(error))
                 } else {
+                    self.logger.info("Successfully soft-deleted spot '\(spotToDelete.name)'.")
                     completion(.success(()))
                 }
             }
         }
     }
+    
+    /// Restores a soft-deleted spot by removing its `deletedAt` timestamp.
     func restoreSpot(_ spotToRestore: Spot) {
-        guard let spotId = spotToRestore.id else { return }
-        // We update the document to completely remove the `deletedAt` field.
+        guard let spotId = spotToRestore.id else {
+            logger.error("Cannot restore spot: Spot ID is missing.")
+            return
+        }
+        logger.info("Restoring spot '\(spotToRestore.name)'.")
         userSpotsCollection(userId: spotToRestore.userId)
             .document(spotId)
             .updateData(["deletedAt": FieldValue.delete()])
     }
 
+    /// Permanently deletes a spot from Firestore. This action is irreversible.
     func permanentlyDeleteSpot(_ spotToDelete: Spot) {
-        guard let spotId = spotToDelete.id else { return }
-        // This performs the final, irreversible deletion from the database.
+        guard let spotId = spotToDelete.id else {
+            logger.error("Cannot permanently delete spot: Spot ID is missing.")
+            return
+        }
+        logger.info("Permanently deleting spot '\(spotToDelete.name)' (ID: \(spotId)).")
         userSpotsCollection(userId: spotToDelete.userId)
             .document(spotId)
             .delete()
     }
-
     
-
+    /// Queries for and permanently deletes all spots that were soft-deleted more than 30 days ago.
     func purgeExpiredSpots(for userId: String) {
-        // Calculate the date 30 days ago from now.
         let thirtyDaysAgo = Date().addingTimeInterval(-30 * 24 * 60 * 60)
         let thirtyDaysAgoTimestamp = Timestamp(date: thirtyDaysAgo)
         
-        // Create a query to find spots that were soft-deleted more than 30 days ago.
+        let db = self.db
+        
         userSpotsCollection(userId: userId)
             .whereField("deletedAt", isLessThan: thirtyDaysAgoTimestamp)
             .getDocuments { [weak self] snapshot, error in
+                guard let self = self else { return }
                 guard let documents = snapshot?.documents, !documents.isEmpty else {
-                    print("SpotViewModel: No expired spots to purge.")
+                    Task { @MainActor in
+                        self.logger.info("No expired spots to purge.")
+                    }
                     return
                 }
                 
-                // Use a batch write to delete all expired documents at once.
-                let batch = self?.db.batch()
-                print("SpotViewModel: Purging \(documents.count) expired spots...")
-                documents.forEach { batch?.deleteDocument($0.reference) }
+                let batch = db.batch()
+                Task { @MainActor in
+                    self.logger.info("Purging \(documents.count) expired spots...")
+                }
+                documents.forEach { batch.deleteDocument($0.reference) }
                 
-                batch?.commit()
+                batch.commit { error in
+                    if let error = error {
+                        Task { @MainActor in
+                            self.logger.error("Failed to commit batch purge of expired spots: \(error.localizedDescription)")
+                        }
+                    } else {
+                        Task { @MainActor in
+                            self.logger.info("Successfully purged \(documents.count) expired spots.")
+                        }
+                    }
+                }
             }
     }
 
+    /// Detaches the Firestore listener and clears all local spot data.
     func stopListeningAndClearData() {
-        print("SpotViewModel: Stopping listener and clearing data.")
+        logger.info("Stopping listener and clearing local spot data.")
         spotsListenerRegistration?.remove()
         spotsListenerRegistration = nil
         spots = []
+        recentlyDeletedSpots = []
         errorMessage = nil
         isLoading = false
     }
     
-    // MARK: - Helper Methods
-    
-    private func spotsAreEqual(_ spots1: [Spot], _ spots2: [Spot]) -> Bool {
-        guard spots1.count == spots2.count else { return false }
-        
-        // Sort both arrays by ID for comparison
-        let sorted1 = spots1.sorted { ($0.id ?? "") < ($1.id ?? "") }
-        let sorted2 = spots2.sorted { ($0.id ?? "") < ($1.id ?? "") }
-        
-        for (spot1, spot2) in zip(sorted1, sorted2) {
-            if !spotsAreEqual(spot1, spot2) {
-                return false
-            }
-        }
-        return true
-    }
-    
-    private func spotsAreEqual(_ spot1: Spot, _ spot2: Spot) -> Bool {
-        return spot1.id == spot2.id &&
-               spot1.name == spot2.name &&
-               spot1.address == spot2.address &&
-               spot1.latitude == spot2.latitude &&
-               spot1.longitude == spot2.longitude &&
-               spot1.category == spot2.category &&
-               spot1.sourceURL == spot2.sourceURL &&
-               spot1.phoneNumber == spot2.phoneNumber &&
-               spot1.websiteURL == spot2.websiteURL &&
-               spot1.collectionIds == spot2.collectionIds &&
-               spot1.wantsNearbyNotification == spot2.wantsNearbyNotification &&
-               abs(spot1.notificationRadiusMeters - spot2.notificationRadiusMeters) < 0.1 &&
-//               spot1.visitCount == spot2.visitCount &&
-               spot1.createdAt?.dateValue() == spot2.createdAt?.dateValue()
-    }
-    
-    func getSpot(withId spotId: String) -> Spot? {
-        return spots.first { $0.id == spotId }
-    }
-    
-//    func incrementVisitCount(for spot: Spot) {
-//        guard let spotId = spot.id else { return }
-//        
-//        // This atomically adds 1 to the value on the server.
-//        // We no longer change the local `spots` array here.
-//        userSpotsCollection(userId: spot.userId)
-//            .document(spotId)
-//            .updateData(["visitCount": FieldValue.increment(Int64(1))])
-//    }
-//
-//    func decrementVisitCount(for spot: Spot) {
-//        guard let spotId = spot.id, spot.visitCount > 0 else { return }
-//        
-//        // This atomically subtracts 1 from the value on the server.
-//        // We no longer change the local `spots` array here.
-//        userSpotsCollection(userId: spot.userId)
-//            .document(spotId)
-//            .updateData(["visitCount": FieldValue.increment(Int64(-1))])
-//    }
-//    
-//    func resetVisitCount(for spot: Spot) {
-//        guard let spotId = spot.id else {
-//            print("SpotViewModel: Cannot reset visitCount – spot has no ID.")
-//            return
-//        }
-//
-//        // Only reset if the spot has been visited
-//        guard spot.visitCount > 0 else {
-//            print("SpotViewModel: visitCount is already 0, no need to reset.")
-//            return
-//        }
-//
-//        userSpotsCollection(userId: spot.userId)
-//            .document(spotId)
-//            .updateData(["visitCount": 0]) { [weak self] error in
-//                Task { @MainActor in
-//                    guard let self = self else { return }
-//                    if let error = error {
-//                        // This now USES the error object, fixing the warning
-//                        print("ERROR: Failed to reset visit count: \(error.localizedDescription)")
-//                        self.errorMessage = "Could not reset visit count."
-//                    } else {
-//                        // This is the success case
-//                        if let index = self.spots.firstIndex(where: { $0.id == spotId }) {
-//                            withAnimation {
-//                                self.spots[index].visitCount = 0
-//                            }
-//                        }
-//                    }
-//                }
-//            }
-//    }
+    /// Forces a re-fetch of all spot data from Firestore.
     func forceRefresh(userId: String) {
-        print("SpotViewModel: Force refresh requested")
+        logger.info("Force refresh requested.")
         stopListeningAndClearData()
         listenForSpots(userId: userId)
+    }
+    
+    /// Retrieves a spot from the local array by its ID.
+    func getSpot(withId spotId: String) -> Spot? {
+        return spots.first { $0.id == spotId }
     }
 }
 
@@ -512,3 +472,4 @@ enum SpotError: LocalizedError {
         }
     }
 }
+

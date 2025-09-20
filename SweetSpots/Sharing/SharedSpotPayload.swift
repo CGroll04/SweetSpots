@@ -7,8 +7,13 @@
 
 import Foundation
 import FirebaseFirestore
+import os.log
 
+/// A data structure for encoding and decoding a single shared spot.
 struct SharedSpotPayload: Codable, Equatable {
+    
+    private static let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "SharedSpotPayload")
+    
     // required
     var name: String
     var address: String
@@ -16,9 +21,16 @@ struct SharedSpotPayload: Codable, Equatable {
     var longitude: Double
     var category: String
     
+    /// Safely converts the raw string category into a `SpotCategory` enum, falling back to a default value if the raw value is invalid.
     func resolvedCategory(default fallback: SpotCategory = .other) -> SpotCategory {
-        SpotCategory(rawValue: category) ?? fallback
+        if let resolved = SpotCategory(rawValue: category) {
+            return resolved
+        } else {
+            Self.logger.warning("Unrecognized category string '\(self.category)' found in payload. Falling back to default.")
+            return fallback
+        }
     }
+
     
     // optional
     var phoneNumber: String?
@@ -44,8 +56,6 @@ extension SharedSpotPayload {
         self.latitude = spot.latitude
         self.longitude = spot.longitude
         self.category = spot.category.rawValue
-        
-        // Map all other relevant properties
         self.phoneNumber = spot.phoneNumber
         self.websiteURL = spot.websiteURL
         self.notes = spot.notes
@@ -56,5 +66,14 @@ extension SharedSpotPayload {
         // Note: Fields like `senderName` and `expiresAt` are left nil
         // because they belong to the temporary share model, not the
         // new permanent link model.
+    }
+}
+
+extension SharedSpotPayload: Hashable {
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(address)
+        hasher.combine(latitude)
+        hasher.combine(longitude)
     }
 }

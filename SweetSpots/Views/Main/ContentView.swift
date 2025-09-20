@@ -32,11 +32,3 @@ struct ContentView: View {
         .animation(.easeInOut, value: authViewModel.userSession)
     }
 }
-
-// MARK: - Preview
-// Provides a preview for ContentView in Xcode's canvas.
-// An AuthViewModel instance is injected for the preview to function correctly.
-#Preview {
-    ContentView()
-        .environmentObject(AuthViewModel())
-}

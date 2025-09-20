@@ -8,12 +8,12 @@
 import Foundation
 import FirebaseFirestore
 
+/// A data structure for encoding and decoding a shared collection and its spots.
 struct SharedCollectionPayload: Codable, Equatable {
     // Collection Info
     var collectionName: String
     var collectionDescription: String?
     
-    // An array of all the spots in the collection
     var spots: [SharedSpotPayload]
     
     // Versioning

@@ -6,8 +6,11 @@
 //
 
 import SwiftUI
+import os.log
 
+/// A view that provides app settings, account management, and other administrative actions.
 struct SettingsView: View {
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "SettingsView")
     
     let onDismiss: () -> Void
 
@@ -269,7 +272,9 @@ struct SettingsView: View {
     }
 
     // MARK: - Helper Functions & Actions
+    /// Signs the user out and clears all local data and listeners.
     private func performSignOut() {
+        logger.info("User initiated sign out.")
         locationManager.stopAllGeofences()
         spotsViewModel.stopListeningAndClearData()
         collectionViewModel.detachCollectionsListener()
@@ -297,12 +302,12 @@ struct SettingsView: View {
                 }
                 
                 // If we get here, all permissions are good. Sync the geofences.
-                print("SettingsView: All necessary permissions granted. Enabling global geofencing and synchronizing.")
+                logger.info("All necessary permissions granted. Enabling global geofencing and synchronizing.")
                 self.locationManager.synchronizeGeofences(forSpots: spotsViewModel.spots, globallyEnabled: true)
             }
         } else {
             // If the user toggles OFF, just disable all geofences.
-            print("SettingsView: Global geofencing toggle turned OFF. Disabling all geofences.")
+            logger.info("Global geofencing toggle turned OFF. Disabling all geofences.")
             self.locationManager.synchronizeGeofences(forSpots: spotsViewModel.spots, globallyEnabled: false)
         }
     }
@@ -310,7 +315,7 @@ struct SettingsView: View {
     private func checkAndRequestCorePermissions() async -> Bool {
         // 1. Check for 'Always' Location permission.
         if locationManager.authorizationStatus != .authorizedAlways {
-            print("SettingsView: 'Always' location permission is required. Requesting...")
+            logger.info("'Always' location permission is required. Requesting...")
             locationManager.requestLocationAuthorization(aimForAlways: true)
             
             // Give the system a moment and re-check.
@@ -319,7 +324,7 @@ struct SettingsView: View {
             
             // If we still don't have it, fail.
             guard locationManager.authorizationStatus == .authorizedAlways else {
-                print("SettingsView: Failed to obtain 'Always' location permission.")
+                logger.warning("Failed to obtain 'Always' location permission.")
                 // The LocationManager will have shown the "Go to Settings" alert if needed.
                 return false
             }
@@ -328,7 +333,7 @@ struct SettingsView: View {
         // 2. Check for Notification permission.
         let notificationsGranted = await locationManager.requestNotificationPermissionAsync()
         if !notificationsGranted {
-            print("SettingsView: Notification permission is required but was not granted.")
+            logger.info("Notification permission is required but was not granted.")
             // Show an alert to the user explaining why it's needed.
             self.alertInfo = AlertInfo(
                 title: "Notifications Required",
@@ -351,6 +356,8 @@ struct SettingsView: View {
             return
         }
         
+        logger.info("User initiated bulk update to \(enable ? "enable" : "disable") notifications for \(spotsToModify.count) spots.")
+        
         self.isProcessingBulkUpdate = true
         
         Task {
@@ -367,7 +374,8 @@ struct SettingsView: View {
                                 switch result {
                                 case .success:
                                     continuation.resume(returning: true)
-                                case .failure:
+                                case .failure(let error):
+                                    self.logger.error("Bulk update failed for spot \(spot.id ?? "N/A"): \(error.localizedDescription)")
                                     continuation.resume(returning: false)
                                 }
                                 // ---------------------
@@ -389,11 +397,13 @@ struct SettingsView: View {
                 self.isProcessingBulkUpdate = false
                 
                 if failureCount > 0 {
+                    logger.warning("Bulk update finished with \(failureCount) failures and \(successCount) successes.")
                     alertInfo = AlertInfo(
                         title: "Partial Update",
                         message: "Updated \(successCount) spots successfully. \(failureCount) spots failed to update. Please try again."
                     )
                 } else {
+                    logger.info("Bulk update finished successfully for \(successCount) spots.")
                     alertInfo = AlertInfo(
                         title: "Success",
                         message: "Alert preferences updated for \(successCount) spots."

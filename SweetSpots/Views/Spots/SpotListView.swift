@@ -6,9 +6,10 @@
 //
 
 import SwiftUI
-import CoreLocation // Needed for CLLocation and CLLocationCoordinate2D
+import CoreLocation
+import os.log
 
-
+/// The main view displaying a filterable, sortable list of the user's spots.
 struct SpotListView: View {
     // MARK: - Environment Objects
     @EnvironmentObject private var spotsViewModel: SpotViewModel
@@ -17,9 +18,11 @@ struct SpotListView: View {
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
     @EnvironmentObject private var navigationViewModel: NavigationViewModel
 
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "SpotListView")
+    
     // MARK: - UI State
     @State private var searchText = ""
-    @State private var showingAddSheet: Bool = false // Add this line
+    @State private var showingAddSheet: Bool = false
     @State private var spotToEdit: Spot? = nil
     @State private var collectionToEdit: SpotCollection? = nil
     @State private var spotToDelete: Spot? = nil
@@ -38,7 +41,7 @@ struct SpotListView: View {
     @State private var collectionFilterState: CollectionFilterState = .all
     
     // State to control side menu presentation
-    @State private var showingSettingsSheet: Bool = false // <-- ADD THIS
+    @State private var showingSettingsSheet: Bool = false
     
     // MARK: - Geofencing State
     @State private var hasInitializedGeofences = false
@@ -58,16 +61,7 @@ struct SpotListView: View {
 //    private var visitedSpots: [Spot] {
 //        displayedSpots.filter { $0.visitCount > 0 }
 //    }
-
-    enum SortOrder: String, CaseIterable, Identifiable {
-        case dateDescending = "Newest First"
-        case dateAscending = "Oldest First"
-        case nameAscending = "Name (A-Z)"
-        case nameDescending = "Name (Z-A)"
-        case categoryAscending = "Category (A-Z)"
-        case distanceAscending = "Distance (Nearest)"
-        var id: String { self.rawValue }
-    }
+    
 //    enum SpotTab {
 //        case notVisited
 //        case visited
@@ -82,7 +76,6 @@ struct SpotListView: View {
     private var displayedSpots: [Spot] {
         var workingSpots = spotsViewModel.spots
 
-        // --- THIS LOGIC IS NOW UPDATED FOR THE collectionIds ARRAY ---
         if let collectionId = selectedCollectionFilterId {
             // Find spots whose collectionIds array CONTAINS the selected ID
             workingSpots = workingSpots.filter { $0.collectionIds.contains(collectionId) }
@@ -127,7 +120,7 @@ struct SpotListView: View {
             workingSpots.sort { $0.category.displayName.localizedCaseInsensitiveCompare($1.category.displayName) == .orderedAscending }
         case .distanceAscending:
             guard let userCurrentLocation = locationManager.userLocation else {
-                print("SpotListView: Cannot sort by distance, user location not available.")
+                logger.info("Cannot sort by distance, user location not available.")
                 break
             }
             let clUserLocation = CLLocation(latitude: userCurrentLocation.coordinate.latitude, longitude: userCurrentLocation.coordinate.longitude)
@@ -144,7 +137,82 @@ struct SpotListView: View {
     // MARK: - Body
     var body: some View {
         NavigationStack {
+            // This is STAGE 2. It takes the view from the property below
+            // and adds the final alert and lifecycle modifiers.
             baseContentWithModifiers
+                .alert(
+                    "Delete SweetSpot",
+                    isPresented: $showingDeleteConfirmation,
+                    presenting: spotToDelete
+                ) { spot in
+                    Button("Delete", role: .destructive) {
+                        spotsViewModel.deleteSpot(spot) { result in
+                            if case .failure(let error) = result {
+                                spotsViewModel.errorMessage = "Failed to delete: \(error.localizedDescription)"
+                            }
+                        }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: { spot in
+                    Text("This will move \"\(spot.name)\" to the Recently Deleted section, where it will be permanently deleted after 30 days.")
+                }
+                .onAppear {
+                    initialLoadTasks()
+                }
+                .onChange(of: collectionViewModel.collections) {
+                    if let currentId = selectedCollectionFilterId {
+                        if !collectionViewModel.collections.contains(where: { $0.id == currentId }) {
+                            selectedCollectionFilterId = nil
+                        }
+                    }
+                }
+                .onChange(of: spotsViewModel.spots) { oldSpots, newSpots in
+                    logger.info("spotsViewModel.spots changed. Count: \(newSpots.count)")
+                    
+                    // Check if any spot's notification setting changed
+                    let oldNotificationSpots = Set(oldSpots.filter { $0.wantsNearbyNotification }.compactMap { $0.id })
+                    let newNotificationSpots = Set(newSpots.filter { $0.wantsNearbyNotification }.compactMap { $0.id })
+                    
+                    if oldNotificationSpots != newNotificationSpots {
+                        logger.info("Spot notification settings changed, updating geofences")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            syncGeofencesIfReady()
+                        }
+                    }
+                }
+                .onChange(of: locationManager.userLocation) { _, newLocation in
+                    if currentSortOrder == .distanceAscending && newLocation != nil {
+                        logger.info("User location changed, spots will re-sort automatically.")
+                    }
+                }
+                .onChange(of: locationManager.authorizationStatus) { _, newStatus in
+                    logger.info("Location authorization status changed to: \(LocationManager.string(for: newStatus))")
+                    
+                    if newStatus == .authorizedWhenInUse || newStatus == .authorizedAlways {
+                        if !locationManager.isRequestingLocationUpdates {
+                            logger.info("Permission granted, starting location updates.")
+                            locationManager.startUpdatingUserLocation()
+                        }
+                        
+                        if newStatus == .authorizedAlways {
+                            logger.info("Got Always permission, syncing geofences")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                syncGeofencesIfReady()
+                            }
+                        }
+                    } else if newStatus == .denied || newStatus == .restricted {
+                        // Stop geofences if permission was revoked
+                        locationManager.stopAllGeofences()
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .shouldNavigateToSpot)) { notification in
+                    handleGeofenceNavigation(notification)
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .applicationDidBecomeActive)) { _ in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        syncGeofencesIfReady()
+                    }
+                }
         }
     }
     
@@ -158,142 +226,49 @@ struct SpotListView: View {
 
     // Layer 2: Apply modifiers in stages
     private var baseContentWithModifiers: some View {
-            let navigationConfiguredContent = coreZStackContent
-                .navigationTitle(currentNavigationTitle)
-                .navigationBarTitleDisplayMode(.large)
-                .toolbarBackground(Color.themeBackground, for: .navigationBar)
-                .toolbarBackground(.visible, for: .navigationBar)
-                .toolbar { navigationToolbarItems() }
-                .searchable(text: $searchText, prompt: "Search spots...")
-                .navigationDestination(for: Spot.self) { spot in
-                    SpotDetailView(spotId: spot.id ?? "", presentedFrom: .list)
-                        .environmentObject(spotsViewModel)
-                        .environmentObject(locationManager)
-                        .environmentObject(navigationViewModel)
-                        .environmentObject(collectionViewModel)
-                }
-                .sheet(isPresented: $showingAddSheet) {
-                   AddSpotView(isPresented: $showingAddSheet, spotToEdit: nil,prefilledPayload: nil, prefilledURL: nil)
-                       .environmentObject(spotsViewModel)
-                       .environmentObject(authViewModel)
-                       .environmentObject(locationManager)
-                       .environmentObject(collectionViewModel)
-                       .environmentObject(navigationViewModel)
-               }
-                .sheet(isPresented: isShowingEditSheet, onDismiss: {
-                    print("SpotListView: Edit Spot sheet dismissed. Real-time listener will handle updates.")
-                }) {
-                    if let spot = spotToEdit {
-                        // This sheet also needs the environment objects
-                        AddSpotView(isPresented: isShowingEditSheet, spotToEdit: spot,prefilledPayload: nil, prefilledURL: nil)
-                            .environmentObject(spotsViewModel)
-                            .environmentObject(authViewModel)
-                            .environmentObject(locationManager)
-                            .environmentObject(collectionViewModel)
-                            .environmentObject(navigationViewModel)
-                    }
-                }
-        
-                .sheet(item: $itemToShare) { item in
-                    ShareSheet(items: [item.text, item.url])
-                }
-                .sheet(isPresented: $showingSettingsSheet) {
-                    SettingsView(
-                        onDismiss: { showingSettingsSheet = false }
-                    ) // This presents the settings screen
-                }
-
-        // Stage 2: Apply lifecycle and onChange modifiers
-        let finalContent = navigationConfiguredContent
-            .alert(
-                "Delete SweetSpot",
-                isPresented: $showingDeleteConfirmation,
-                presenting: spotToDelete
-            ) { spot in
-                // Action Buttons
-                Button("Delete", role: .destructive) {
-                    // This is where the actual deletion happens
-                    spotsViewModel.deleteSpot(spot) { result in
-                        if case .failure(let error) = result {
-                            spotsViewModel.errorMessage = "Failed to delete: \(error.localizedDescription)"
-                        }
-                    }
-                }
-                Button("Cancel", role: .cancel) {
-                    // Dismisses the alert automatically
-                }
-            } message: { spot in
-                // The confirmation message
-                Text("This will move \"\(spot.name)\" to the Recently Deleted section, where it will be permanently deleted after 30 days.")
+        VStack(spacing: 0) {
+            Spacer().frame(height: 1)
+            coreZStackContent
+        }
+        .navigationTitle(currentNavigationTitle)
+        .navigationBarTitleDisplayMode(.large)
+        .toolbarBackground(Color.themeBackground, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar { navigationToolbarItems() }
+        .searchable(text: $searchText, prompt: "Search spots...")
+        .navigationDestination(for: Spot.self) { spot in
+            SpotDetailView(spotId: spot.id ?? "", presentedFrom: .list)
+                .environmentObject(spotsViewModel)
+                .environmentObject(locationManager)
+                .environmentObject(navigationViewModel)
+                .environmentObject(collectionViewModel)
+        }
+        .sheet(isPresented: $showingAddSheet) {
+            AddSpotView(isPresented: $showingAddSheet, spotToEdit: nil,prefilledPayload: nil, prefilledURL: nil)
+                .environmentObject(spotsViewModel)
+                .environmentObject(authViewModel)
+                .environmentObject(locationManager)
+                .environmentObject(collectionViewModel)
+                .environmentObject(navigationViewModel)
+        }
+        .sheet(isPresented: isShowingEditSheet, onDismiss: {
+            logger.info("Edit Spot sheet dismissed. Real-time listener will handle updates.")
+        }) {
+            if let spot = spotToEdit {
+                AddSpotView(isPresented: isShowingEditSheet, spotToEdit: spot,prefilledPayload: nil, prefilledURL: nil)
+                    .environmentObject(spotsViewModel)
+                    .environmentObject(authViewModel)
+                    .environmentObject(locationManager)
+                    .environmentObject(collectionViewModel)
+                    .environmentObject(navigationViewModel)
             }
-        
-            .onAppear {
-                // Load geofencing setting from UserDefaults
-                initialLoadTasks()
-            }
-            .onChange(of: collectionViewModel.collections) {
-                // If a collection filter is active...
-                if let currentId = selectedCollectionFilterId {
-                    // ...check if that collection still exists in the updated list.
-                    let collectionExists = collectionViewModel.collections.contains { $0.id == currentId }
-                    
-                    // If it no longer exists, it was deleted. Reset the filter.
-                    if !collectionExists {
-                        selectedCollectionFilterId = nil
-                    }
-                }
-            }
-            .onChange(of: spotsViewModel.spots) { oldSpots, newSpots in
-                print("SpotListView: spotsViewModel.spots changed. Count: \(newSpots.count)")
-                
-                // Check if any spot's notification setting changed
-                let oldNotificationSpots = Set(oldSpots.filter { $0.wantsNearbyNotification }.compactMap { $0.id })
-                let newNotificationSpots = Set(newSpots.filter { $0.wantsNearbyNotification }.compactMap { $0.id })
-                
-                if oldNotificationSpots != newNotificationSpots {
-                    print("SpotListView: Spot notification settings changed, updating geofences")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        syncGeofencesIfReady()
-                    }
-                }
-            }
-            .onChange(of: locationManager.userLocation) { _, newLocation in
-                if currentSortOrder == .distanceAscending && newLocation != nil {
-                    print("SpotListView: User location changed, spots will re-sort automatically.")
-                }
-            }
-            .onChange(of: locationManager.authorizationStatus) { _, newStatus in
-                print("SpotListView: Location authorization status changed to: \(LocationManager.string(for: newStatus))")
-                
-                if newStatus == .authorizedWhenInUse || newStatus == .authorizedAlways {
-                    if !locationManager.isRequestingLocationUpdates {
-                        print("SpotListView: Permission granted, starting location updates.")
-                        locationManager.startUpdatingUserLocation()
-                    }
-                    
-                    // If we now have Always permission, sync geofences
-                    if newStatus == .authorizedAlways {
-                        print("SpotListView: Got Always permission, syncing geofences")
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            syncGeofencesIfReady()
-                        }
-                    }
-                } else if newStatus == .denied || newStatus == .restricted {
-                    // Stop geofences if permission was revoked
-                    locationManager.stopAllGeofences()
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .shouldNavigateToSpot)) { notification in
-                handleGeofenceNavigation(notification)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .applicationDidBecomeActive)) { _ in
-                // Re-sync geofences when app becomes active
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    syncGeofencesIfReady()
-                }
-            }
-        
-        return finalContent
+        }
+        .sheet(item: $itemToShare) { item in
+            ShareSheet(items: [item.text, item.url])
+        }
+        .sheet(isPresented: $showingSettingsSheet) {
+            SettingsView(onDismiss: { showingSettingsSheet = false })
+        }
     }
 
     // MARK: - View Content Logic
@@ -405,8 +380,6 @@ struct SpotListView: View {
     private func handleShare(for spot: Spot) async {
         guard let userId = authViewModel.userSession?.uid else { return }
 
-        // You can add a @State var for a loading spinner here if desired
-
         do {
             let senderName = authViewModel.userSession?.displayName
 
@@ -421,7 +394,7 @@ struct SpotListView: View {
             itemToShare = ShareableContent(text: text, url: url)
 
         } catch {
-            print("SpotListView: Failed to create share link: \(error)")
+            logger.error("Failed to create share link: \(error)")
             // Optionally, show an error alert here
         }
     }
@@ -463,9 +436,9 @@ struct SpotListView: View {
                 FilterMenuView(
                     collectionFilterState: $collectionFilterState,
                     selectedCategoryFilters: $selectedCategoryFilters,
-                    showCollectionFilterOptions: true // <-- Show the options here
+                    showCollectionFilterOptions: true
                 )
-                .presentationCompactAdaptation(.popover) // Ensures it looks good on iPhone
+                .presentationCompactAdaptation(.popover)
             }
             
             Button {
@@ -486,11 +459,11 @@ struct SpotListView: View {
 
         // Handle Location Permission Request
         if locationManager.userLocation == nil {
-            print("SpotListView: Default sort is distance. Requesting location.")
+            logger.info("Default sort is distance. Requesting location.")
             locationManager.requestLocationAuthorization(aimForAlways: false)
         } else if !locationManager.isRequestingLocationUpdates &&
                   (locationManager.authorizationStatus == .authorizedWhenInUse || locationManager.authorizationStatus == .authorizedAlways) {
-            print("SpotListView: Location available from previous session, ensuring updates are active.")
+            logger.info("Location available from previous session, ensuring updates are active.")
             locationManager.startUpdatingUserLocation()
         }
         
@@ -507,20 +480,18 @@ struct SpotListView: View {
             return
         }
         
-        print("SpotListView: Navigating to spot from geofence notification: \(spotId)")
+        logger.info("Navigating to spot from geofence notification: \(spotId)")
         
-        // You might want to navigate directly or highlight the spot
-        // For now, just scroll to the spot if it's visible
         if let spot = spotsViewModel.spots.first(where: { $0.id == spotId }) {
             // Could implement scroll-to-spot functionality here
-            print("Found spot to navigate to: \(spot.name)")
+            logger.info("Found spot to navigate to: \(spot.name)")
         }
     }
     
     private func initializeGeofencesIfNeeded() {
         guard !hasInitializedGeofences else { return }
         
-        print("SpotListView: Initializing geofences...")
+        logger.info("Initializing geofences...")
         hasInitializedGeofences = true
         
         // Sync geofences with current spots
@@ -529,14 +500,14 @@ struct SpotListView: View {
     
     private func syncGeofencesIfReady() {
         guard geofencingGloballyEnabled else {
-            print("SpotListView: Geofencing disabled globally")
+            logger.info("Geofencing disabled globally")
             locationManager.stopAllGeofences()
             return
         }
         
         // Check if we have the necessary permissions
         guard locationManager.authorizationStatus == .authorizedAlways else {
-            print("SpotListView: Need 'Always' location permission for geofencing")
+            logger.info("Need 'Always' location permission for geofencing")
             
             // If user has 'When In Use', we could prompt them to upgrade
             if locationManager.authorizationStatus == .authorizedWhenInUse {
@@ -547,7 +518,7 @@ struct SpotListView: View {
         
         // Sync geofences with current spots
         let spotsWithNotifications = spotsViewModel.spots.filter { $0.wantsNearbyNotification }
-        print("SpotListView: Syncing geofences for \(spotsWithNotifications.count) spots with notifications enabled")
+        logger.info("Syncing geofences for \(spotsWithNotifications.count) spots with notifications enabled")
         
         locationManager.synchronizeGeofences(
             forSpots: spotsViewModel.spots,
@@ -557,9 +528,8 @@ struct SpotListView: View {
     
     private func promptForAlwaysLocationPermission() {
         // This could show a custom alert explaining why Always permission is needed
-        print("SpotListView: Could show alert explaining Always permission benefits")
+        logger.info("Could show alert explaining Always permission benefits")
         
-        // For now, just request the permission
         locationManager.requestLocationAuthorization(aimForAlways: true)
     }
     
@@ -573,15 +543,15 @@ struct SpotListView: View {
 
     // MARK: - Action Handlers & Dynamic UI
     private func editSpot(_ spot: Spot) {
-        print("SPOT_LIST_VIEW_EDIT_SPOT: Setting spotToEdit: '\(spot.name)' (ID: \(spot.id ?? "nil")) - wantsNotification: \(spot.wantsNearbyNotification)")
+        logger.debug("Setting spotToEdit: '\(spot.name)' (ID: \(spot.id ?? "nil")) - wantsNotification: \(spot.wantsNearbyNotification)")
         
         // Get the latest spot data before editing
         if let spotId = spot.id,
            let latestSpot = spotsViewModel.spots.first(where: { $0.id == spotId }) {
-            print("SPOT_LIST_VIEW_EDIT_SPOT: Using latest spot data - wantsNotification: \(latestSpot.wantsNearbyNotification)")
+            logger.debug("Using latest spot data - wantsNotification: \(latestSpot.wantsNearbyNotification)")
             self.spotToEdit = latestSpot
         } else {
-            print("SPOT_LIST_VIEW_EDIT_SPOT: Using original spot data (fallback)")
+            logger.debug("Using original spot data (fallback)")
             self.spotToEdit = spot
         }
     }
@@ -617,7 +587,6 @@ struct SpotListView: View {
             return "This collection is empty. Add some spots to it!"
         }
         
-        // Now check the new popover filter state
         switch collectionFilterState {
         case .inCollection:
             return "None of your spots are in a collection."
@@ -643,7 +612,6 @@ struct SpotListView: View {
                 // This is the text part of the label
                 Text("All Categories")
             } icon: {
-                // This is the icon part, which we can now modify
                 Image(systemName: selectedCategoryFilters.isEmpty ? "checkmark.circle.fill" : "circle")
                     .font(.callout)
             }
@@ -666,225 +634,6 @@ struct SpotListView: View {
             }
         } label: {
             Label("Sort", systemImage: "arrow.up.arrow.down.circle").foregroundStyle(Color.themePrimary)
-        }
-    }
-}
-
-// MARK: - SpotCardView
-struct SpotCardView: View {
-    let spot: Spot
-    let userLocation: CLLocation?
-    let onEdit: () -> Void
-    let onDelete: () -> Void
-//    let onIncrement: () -> Void
-//    let onDecrement: () -> Void
-//    let onReset: () -> Void
-    let onShare: () -> Void
-
-    @State private var locationDisplay: (icon: String, text: String)?
-//    @State private var showUndoBanner = false
-//    @State private var undoTimer: Timer? = nil
-    @Environment(\.colorScheme) var colorScheme
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                // Leading Category Icon
-                Image(systemName: spot.category.systemImageName)
-                    .font(.system(size: 18))
-                    .foregroundStyle(.white)
-                    .frame(width: 36, height: 36)
-                    .background(colorFromString(spot.category.associatedColor))
-                    .clipShape(Circle())
-                    .padding(.leading, 12)
-                    .padding(.trailing, 10)
-
-                // Main Content
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(spot.name)
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(Color.themeTextPrimary)
-                            .lineLimit(1)
-                        
-                        // This icon will only appear if notifications are on for this spot
-                        if spot.wantsNearbyNotification {
-                            Image(systemName: "bell.fill")
-                                .font(.caption) // Makes the icon slightly smaller than the text
-                                .foregroundStyle(Color.themeAccent) // Use your app's accent color
-                        }
-                    }
-
-                    HStack(spacing: 6) {
-                        if let display = locationDisplay {
-                            Label(display.text, systemImage: display.icon)
-                                .font(.caption2)
-                                .foregroundStyle(Color.themeTextSecondary)
-                                .lineLimit(1)
-                        }
-                        
-//                        if spot.visitCount > 0 {
-//                            Text("Visited: \(spot.visitCount)")
-//                                .font(.caption2)
-//                                .foregroundStyle(Color.themeAccent)
-//                                .padding(.horizontal, 6)
-//                                .padding(.vertical, 3)
-//                                .background(Color.themeAccent.opacity(0.1))
-//                                .clipShape(Capsule())
-//                        }
-                    }
-                }
-                .padding(.vertical, 10)
-
-                Spacer()
-
-                // Actions Menu
-                ActionsMenuView(
-                    spot: spot,
-                    onEdit: onEdit,
-                    onDelete: onDelete,
-//                    onIncrement: onIncrement,
-//                    onDecrement: onDecrement,
-//                    onReset: onReset,
-                    onShare: onShare
-                )
-                .padding(.trailing, 6)
-                
-
-                // Chevron
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(Color.themeTextSecondary.opacity(0.6))
-                    .padding(.trailing, 10)
-            }
-            .frame(minHeight: 70)
-            .padding(.vertical, 6)
-            .background(Material.thin)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay {
-                    RoundedRectangle(cornerRadius: 16)
-                    .stroke(
-                        colorScheme == .dark ? Color.white.opacity(0.2) : Color.black.opacity(0.1),
-                        lineWidth: 1
-                    )
-                }            .task(id: spot.id) {
-                await updateLocationDisplay()
-            }
-
-            // Undo Popup
-//            if showUndoBanner {
-//                HStack {
-//                    Text("Marked as visited")
-//                    Spacer()
-//                    Button("Undo") {
-//                        onDecrement()
-//                        undoTimer?.invalidate()
-//                        showUndoBanner = false
-//                    }
-//                }
-//                .font(.footnote)
-//                .foregroundStyle(Color.white)
-//                .padding()
-//                .background(Color.black.opacity(0.9))
-//                .clipShape(RoundedRectangle(cornerRadius: 10))
-//                .padding(.horizontal, 12)
-//                .transition(.move(edge: .bottom).combined(with: .opacity))
-//                .animation(.easeInOut, value: showUndoBanner)
-//            }
-        }
-    }
-
-//    private func showUndoPopupTemporarily() {
-//        withAnimation {
-//            showUndoBanner = true
-//        }
-//        undoTimer?.invalidate()
-//        undoTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: false) { _ in
-//            withAnimation {
-//                showUndoBanner = false
-//            }
-//        }
-//    }
-    
-    private func updateLocationDisplay() async {
-        // Guard against no user location
-        guard let userLoc = userLocation else {
-            // If no user location, just show city/country
-            locationDisplay = await geocodeSpotLocation()
-            return
-        }
-
-        let spotLoc = CLLocation(latitude: spot.latitude, longitude: spot.longitude)
-        let distanceInMeters = userLoc.distance(from: spotLoc)
-        
-        // Set a 100km threshold
-        let distanceThreshold: CLLocationDistance = 50_000
-
-        if distanceInMeters <= distanceThreshold {
-            // Within threshold: show precise distance
-            locationDisplay = (icon: "location.north.fill", text: formatDistance(distanceInMeters))
-        } else {
-            // Outside threshold: show city and country
-            locationDisplay = await geocodeSpotLocation()
-        }
-    }
-    
-    private func geocodeSpotLocation() async -> (icon: String, text: String) {
-        let spotLocation = CLLocation(latitude: spot.latitude, longitude: spot.longitude)
-        let geocoder = CLGeocoder()
-        
-        if let placemark = try? await geocoder.reverseGeocodeLocation(spotLocation).first {
-            let city = placemark.locality ?? ""
-            let country = placemark.country ?? ""
-            
-            if !city.isEmpty && !country.isEmpty {
-                return (icon: "globe.americas.fill", text: "\(city), \(country)")
-            } else if !city.isEmpty {
-                return (icon: "globe.americas.fill", text: city)
-            } else if !country.isEmpty {
-                return (icon: "globe.americas.fill", text: country)
-            }
-        }
-        
-        // Fallback if geocoding fails
-        return (icon: "map.fill", text: "Location loading...")
-    }
-    
-    private func formatDistance(_ distanceInMeters: CLLocationDistance) -> String {
-        let formatter = LengthFormatter()
-        formatter.numberFormatter.maximumFractionDigits = 1
-        
-        if Locale.current.measurementSystem == .us {
-            let distanceInFeet = distanceInMeters * 3.28084
-            if distanceInFeet < 528 { // less than 0.1 miles
-                formatter.numberFormatter.maximumFractionDigits = 0
-                return formatter.string(fromValue: distanceInFeet, unit: .foot)
-            } else {
-                let distanceInMiles = distanceInMeters / 1609.34
-                return formatter.string(fromValue: distanceInMiles, unit: .mile)
-            }
-        } else {
-            if distanceInMeters < 1000 {
-                formatter.numberFormatter.maximumFractionDigits = 0
-                return formatter.string(fromValue: distanceInMeters, unit: .meter)
-            } else {
-                let distanceInKilometers = distanceInMeters / 1000
-                return formatter.string(fromValue: distanceInKilometers, unit: .kilometer)
-            }
-        }
-    }
-    
-    private func colorFromString(_ colorName: String) -> Color {
-        switch colorName {
-        case "orange": return .orange
-        case "green": return .green
-        case "purple": return .purple
-        case "blue": return .blue
-        case "red": return .red
-        case "teal": return .teal
-        case "indigo": return .indigo
-        default: return .blue
         }
     }
 }

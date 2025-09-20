@@ -8,9 +8,14 @@
 import SwiftUI
 import FirebaseAuth
 import FirebaseFirestore
+import os.log
 
 @MainActor
+/// Manages all user authentication flows, including sign in, sign up, password management, and session state.
 class AuthViewModel: ObservableObject {
+    
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "AuthViewModel")
+    
     // MARK: - Published State
     @Published var userSession: FirebaseAuth.User?
     @Published var isLoading: Bool = false
@@ -57,6 +62,7 @@ class AuthViewModel: ObservableObject {
     }
 
     // MARK: - Password Requirements
+    /// Defines the requirements for a valid user password.
     enum PasswordRequirement: CaseIterable, Identifiable {
         case length
         case hasUppercase
@@ -72,7 +78,7 @@ class AuthViewModel: ObservableObject {
             case .hasUppercase: return "At least one uppercase letter"
             case .hasLowercase: return "At least one lowercase letter"
             case .hasNumber: return "At least one number"
-            case .hasSpecialChar: return "At least one special character (!@#$%^&*)"
+            case .hasSpecialChar: return "At least one special character (e.g., !@#$%)"
             }
         }
         
@@ -140,6 +146,7 @@ class AuthViewModel: ObservableObject {
     }
 
     // MARK: - Authentication Operations
+    /// Attempts to sign in the user with the provided email and password.
     func signIn() async {
         guard validateSignInInputs() else { return }
         
@@ -156,11 +163,13 @@ class AuthViewModel: ObservableObject {
             _ = try await Auth.auth().signIn(withEmail: trimmedEmail, password: password)
             clearSensitiveInputsOnSuccess()
         } catch {
+            logger.error("Sign in failed: \(error.localizedDescription)")
             self.errorMessage = mapAuthError(error)
         }
         isLoading = false
     }
 
+    /// Attempts to create a new user account, reserve their username, and sign them in.
     func signUp() async {
         guard validateSignUpInputs() else { return }
 
@@ -186,7 +195,7 @@ class AuthViewModel: ObservableObject {
         let firestoreUsernameKey = originalTrimmedUsername.lowercased()
 
         guard !firestoreUsernameKey.isEmpty else {
-            print("Critical Error: Firestore username key is empty after trimming/lowercasing. Username was: '\(username)'")
+            logger.fault("Firestore username key is empty after trimming/lowercasing. Username was: '\(self.username)'")
             self.errorMessage = "Username format is invalid. Please try a different username."
             self.isLoading = false
             return
@@ -214,14 +223,14 @@ class AuthViewModel: ObservableObject {
             do {
                 try await reserveUsername(firestoreUsernameKey, userId: createdUser.uid)
             } catch {
-                print("CRITICAL: Failed to reserve username '\(firestoreUsernameKey)' for user \(createdUser.uid) AFTER Auth user creation. Error: \(error)")
+                logger.fault("Failed to reserve username '\(firestoreUsernameKey)' for user \(createdUser.uid) AFTER Auth user creation. Error: \(error)")
                 
-                print("Attempting to delete orphaned Firebase Auth user \(createdUser.uid)...")
+                logger.warning("Attempting to delete orphaned Firebase Auth user \(createdUser.uid)...")
                 do {
                     try await createdUser.delete()
-                    print("Successfully deleted orphaned Firebase Auth user \(createdUser.uid)")
+                    logger.info("Successfully deleted orphaned Firebase Auth user \(createdUser.uid)")
                 } catch let deleteError {
-                    print("CRITICAL: Failed to delete orphaned Firebase Auth user \(createdUser.uid). Manual cleanup may be required. Delete Error: \(deleteError)")
+                    logger.fault("CRITICAL: Failed to delete orphaned Firebase Auth user \(createdUser.uid). Manual cleanup may be required. Delete Error: \(deleteError)")
                 }
                 
                 if let firestoreError = error as NSError?,
@@ -240,19 +249,22 @@ class AuthViewModel: ObservableObject {
             clearSensitiveInputsOnSuccess()
 
         } catch let outerError {
-            print("Error during sign up process (outer catch): \(outerError.localizedDescription)")
+            logger.error("Error during sign up process (outer catch): \(outerError.localizedDescription)")
             self.errorMessage = mapAuthError(outerError)
         }
         isLoading = false
     }
 
+    /// Signs out the current user and clears all input fields.
     func signOut() {
-        clearAllInputs()
         do {
             try Auth.auth().signOut()
+            logger.info("User successfully signed out.")
         } catch let signOutError {
+            logger.error("Sign out failed: \(signOutError.localizedDescription)")
             self.errorMessage = "Error signing out: \(signOutError.localizedDescription)"
         }
+        clearAllInputs() // Clear inputs regardless of success or failure
     }
 
     func sendPasswordResetEmail() async {
@@ -282,7 +294,7 @@ class AuthViewModel: ObservableObject {
     // MARK: - Username Management
     private func checkUsernameAvailability(_ usernameKeyForFirestore: String) async -> Bool {
         guard !usernameKeyForFirestore.isEmpty else {
-            print("Error in checkUsernameAvailability: Received an empty usernameKeyForFirestore. This indicates a logic flaw in the caller.")
+            logger.error("Received an empty usernameKeyForFirestore. This indicates a logic flaw in the caller.")
             self.errorMessage = "Internal error verifying username (CUA)."
             return false
         }
@@ -291,7 +303,7 @@ class AuthViewModel: ObservableObject {
             let document = try await db.collection("usernames").document(usernameKeyForFirestore).getDocument()
             return !document.exists
         } catch {
-            print("Error checking username availability: \(error.localizedDescription)")
+            logger.error("Error checking username availability: \(error.localizedDescription)")
             self.errorMessage = "Could not verify username. Please try again."
             return false
         }
@@ -299,7 +311,7 @@ class AuthViewModel: ObservableObject {
 
     private func reserveUsername(_ usernameKeyForFirestore: String, userId: String) async throws {
         guard !usernameKeyForFirestore.isEmpty else {
-            print("Error in reserveUsername: Received an empty usernameKeyForFirestore. This indicates a logic flaw in the caller.")
+            logger.error("Received an empty usernameKeyForFirestore. This indicates a logic flaw in the caller.")
             throw NSError(domain: "AuthViewModel.ReserveUsername", code: 1001,
                           userInfo: [NSLocalizedDescriptionKey: "Attempted to reserve an empty username."])
         }
@@ -307,12 +319,13 @@ class AuthViewModel: ObservableObject {
         do {
             try await db.collection("usernames").document(usernameKeyForFirestore).setData(["userId": userId])
         } catch {
-            print("Failed to reserve username '\(usernameKeyForFirestore)' in Firestore: \(error.localizedDescription)")
+            logger.error("Failed to reserve username '\(usernameKeyForFirestore)' in Firestore: \(error.localizedDescription)")
             throw error
         }
     }
 
     // MARK: - Profile Management
+    /// Updates the current user's password after re-authenticating them.
     func updatePassword(newPassword: String, newPasswordConfirmation: String) async {
         guard validatePasswordChangeInputs(newPassword: newPassword, newPasswordConfirmation: newPasswordConfirmation) else { return }
         
@@ -340,6 +353,7 @@ class AuthViewModel: ObservableObject {
             self.successMessage = "Password updated successfully."
             clearPasswordFields()
         } catch {
+            logger.error("Failed to update password: \(error.localizedDescription)")
             self.errorMessage = mapAuthError(error)
         }
         isLoading = false
@@ -457,6 +471,7 @@ class AuthViewModel: ObservableObject {
 
     // MARK: - Error Mapping
     private func mapAuthError(_ error: Error) -> String {
+        logger.error("Mapping auth error: \(error.localizedDescription) | Domain: \((error as NSError).domain), Code: \((error as NSError).code)")
         var friendlyMessage = "Sorry, we couldn't complete this action. Please check your connection and try again."
         let nsError = error as NSError
 
@@ -496,15 +511,15 @@ class AuthViewModel: ObservableObject {
                 case .missingEmail:
                     friendlyMessage = "Email address is required."
                 default:
-                    print("Unhandled AuthErrorCode: \(nsError.code) - \(error.localizedDescription)")
+                    logger.warning("Unhandled AuthErrorCode: \(nsError.code) - \(error.localizedDescription)")
                     friendlyMessage = "Authentication failed. Please try again."
                 }
             } else {
-                print("Unknown AuthErrorCode raw value: \(nsError.code) - \(error.localizedDescription)")
+                logger.warning("Unknown AuthErrorCode raw value: \(nsError.code) - \(error.localizedDescription)")
                 friendlyMessage = "An unexpected authentication error occurred. Please try again."
             }
         } else if nsError.domain == FirestoreErrorDomain {
-            print("Firestore Error: \(nsError.code) - \(error.localizedDescription)")
+            logger.warning("Firestore Error: \(nsError.code) - \(error.localizedDescription)")
             switch nsError.code {
             case FirestoreErrorCode.permissionDenied.rawValue:
                 friendlyMessage = "You don't have permission for this database action."
@@ -524,7 +539,7 @@ class AuthViewModel: ObservableObject {
         } else if (error as? URLError)?.code == .timedOut {
             friendlyMessage = "Request timed out. Please check your connection and try again."
         } else {
-            print("Non-Firebase Error during auth operation: \(nsError.domain) - \(nsError.code) - \(error.localizedDescription)")
+            logger.warning("Non-Firebase Error during auth operation: \(nsError.domain) - \(nsError.code) - \(error.localizedDescription)")
             friendlyMessage = "An unexpected error occurred. Please try again. If the problem persists, please contact support."
         }
         return friendlyMessage

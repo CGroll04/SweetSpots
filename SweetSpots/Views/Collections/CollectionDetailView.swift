@@ -7,6 +7,7 @@
 
 import SwiftUI
 import MapKit
+import os.log
 
 struct CollectionDetailView: View {
     // MARK: - Environment
@@ -16,22 +17,11 @@ struct CollectionDetailView: View {
     @EnvironmentObject private var locationManager: LocationManager
     @Environment(\.dismiss) private var dismiss
     
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "CollectionDetailView")
     
     // MARK: - State
     let collectionID: String
     
-    // Note 2: We'll use the exact same SortOrder enum from your SpotListView
-    enum SortOrder: String, CaseIterable, Identifiable {
-        case dateDescending = "Newest First"
-        case dateAscending = "Oldest First"
-        case nameAscending = "Name (A-Z)"
-        case nameDescending = "Name (Z-A)"
-        case categoryAscending = "Category (A-Z)"
-        case distanceAscending = "Distance (Nearest)"
-        var id: String { self.rawValue }
-    }
-    
-    // Note 2: State for sorting and filtering, matching SpotListView
     @State private var currentSortOrder: SortOrder = .dateDescending
     @State private var selectedCategoryFilters: Set<SpotCategory> = []
     @State private var isShowingFilterSheet = false
@@ -47,7 +37,6 @@ struct CollectionDetailView: View {
     @State private var spotToDelete: Spot? = nil
     @State private var showingDeleteConfirmationForSpot = false // Use a new name to avoid conflicts
     
-    // --- STATE FOR MAP VIEW ---
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var selectedMapSpot: Spot? = nil // For pin selection
     
@@ -68,7 +57,6 @@ struct CollectionDetailView: View {
         collectionViewModel.collections.first { $0.id == collectionID }
     }
     
-    // The 'displayedSpots' property now includes your sorting and filtering logic
     private var displayedSpots: [Spot] {
         guard let collectionId = liveCollection?.id else { return [] }
         
@@ -107,7 +95,6 @@ struct CollectionDetailView: View {
     var body: some View {
         if let collection = liveCollection {
             VStack(spacing: 0) {
-                // The large header buttons have been removed as requested.
                 headerView(for: collection)
                 
                 Picker("View Mode", selection: $selectedTab) {
@@ -152,6 +139,9 @@ struct CollectionDetailView: View {
             } message: { spot in
                 Text("This will move \"\(spot.name)\" to Recently Deleted.")
             }
+            .onAppear {
+                logger.info("CollectionDetailView appeared for collection ID: \(collectionID)")
+            }
             .sheet(isPresented: $isShowingEditCollectionSheet) { EditCollectionView(collection: collection) }
             .sheet(isPresented: $isShowingManageSpotsSheet) { ManageSpotsInCollectionView(collection: collection) }
             .sheet(item: $itemToShare) { item in ShareSheet(items: [item.text, item.url]) }
@@ -167,14 +157,12 @@ struct CollectionDetailView: View {
     
     private func headerView(for collection: SpotCollection) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // This is the new, larger title
             Text(collection.name)
                 .font(.largeTitle)
                 .fontWeight(.bold)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal)
 
-            // The description will now appear below the title
             if let description = collection.descriptionText, !description.isEmpty {
                 Text(description)
                     .font(.callout)
@@ -190,7 +178,6 @@ struct CollectionDetailView: View {
         ScrollView {
             LazyVStack(spacing: 16) {
                 ForEach(displayedSpots) { spot in
-                    // NavigationLink now wraps the fully interactive SpotCardView
                     NavigationLink(destination: SpotDetailView(spotId: spot.id ?? "", presentedFrom: .list)) {
                         SpotCardView(
                             spot: spot,
@@ -198,7 +185,6 @@ struct CollectionDetailView: View {
                             onEdit: { editSpot(spot) },
                             onDelete: { requestDeleteConfirmation(for: spot) },
                             onShare: { Task { await handleShare(for: spot) } }
-                            // Since we removed visit tracking, we don't need the other closures
                         )
                     }
                 }
@@ -266,7 +252,7 @@ struct CollectionDetailView: View {
         }
         .popover(isPresented: $isShowingFilterSheet) {
             FilterMenuView(
-                collectionFilterState: .constant(.all), // We don't use this here, so pass a constant
+                collectionFilterState: .constant(.all),
                 selectedCategoryFilters: $selectedCategoryFilters,
                 showCollectionFilterOptions: false // Tell the menu to hide the collection options
             )
@@ -286,11 +272,9 @@ struct CollectionDetailView: View {
     
     private func moreMenu(for collection: SpotCollection) -> some View {
         Menu {
-            // Note 3: Edit & Share moved here
             Button { isShowingEditCollectionSheet = true } label: { Label("Edit Details", systemImage: "pencil") }
             Button { Task { await handleShareCollection(for: collection) } } label: { Label("Share Collection", systemImage: "square.and.arrow.up") }
             Divider()
-            // Note 4: Missing options added
             Button { isShowingManageSpotsSheet = true } label: { Label("Edit Spots in Collection", systemImage: "checklist") }
             Button(role: .destructive) { isShowingDeleteConfirmation = true } label: { Label("Delete Collection", systemImage: "trash") }
         } label: {
@@ -300,15 +284,19 @@ struct CollectionDetailView: View {
     
     /// The buttons for the delete confirmation dialog.
     @ViewBuilder
-    private func deleteButtons(for collection: SpotCollection) -> some View {
-        Button("Delete Collection & Spots", role: .destructive) {
-            deleteCollection(collection, mode: .collectionAndSpots)
+        private func deleteButtons(for collection: SpotCollection) -> some View {
+            Button("Delete Collection & Spots", role: .destructive) {
+                Task {
+                    await deleteCollection(collection, mode: .collectionAndSpots)
+                }
+            }
+            Button("Remove Collection Only", role: .destructive) {
+                Task {
+                    await deleteCollection(collection, mode: .collectionOnly)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
         }
-        Button("Remove Collection Only", role: .destructive) {
-            deleteCollection(collection, mode: .collectionOnly)
-        }
-        Button("Cancel", role: .cancel) {}
-    }
 
     // MARK: - Action Handlers
     private func editSpot(_ spot: Spot) {
@@ -323,8 +311,6 @@ struct CollectionDetailView: View {
     private func handleShare(for spot: Spot) async {
         guard let userId = authViewModel.userSession?.uid else { return }
 
-        // You can add a @State var for a loading spinner here if desired
-
         do {
             let senderName = authViewModel.userSession?.displayName
 
@@ -337,41 +323,39 @@ struct CollectionDetailView: View {
 
             let text = senderName != nil ? "\(senderName!) shared '\(spot.name)' with you!" : "Check out '\(spot.name)' on SweetSpots!"
             itemToShare = ShareableContent(text: text, url: url)
+            logger.info("Successfully created share link for spot: \(spot.name)")
 
         } catch {
-            print("SpotListView: Failed to create share link: \(error)")
-            // Optionally, show an error alert here
+            logger.error("Failed to create share link for spot '\(spot.name)': \(error.localizedDescription)")
         }
     }
     
-    private func deleteCollection(_ collection: SpotCollection, mode: CollectionViewModel.DeletionMode) {
-        collectionViewModel.deleteCollection(
-            collection,
-            mode: mode,
-            allSpots: spotsViewModel.spots
-        ) { result in
-            if case .success = result {
-                dismiss() // Go back to the gallery if deletion is successful
-            }
-            // You can handle the error case here, e.g., show an alert
+    private func deleteCollection(_ collection: SpotCollection, mode: CollectionViewModel.DeletionMode) async {
+        do {
+            try await collectionViewModel.deleteCollection(
+                collection,
+                mode: mode,
+                allSpots: spotsViewModel.spots
+            )
+            // This will only run on success
+            logger.info("Successfully deleted collection '\(collection.name)' with mode: \(String(describing: mode)).")
+            dismiss()
+        } catch {
+            // Handle any errors thrown by the view model
+            logger.error("Failed to delete collection: \(error.localizedDescription)")
         }
     }
     
     private func handleShareCollection(for collection: SpotCollection) async {
-        let url = try? await SpotShareManager.makePublicCollectionShareURL(for: collection)
-        if let url = url {
+        do {
+            let url = try await SpotShareManager.makePublicCollectionShareURL(for: collection)
             let senderName = authViewModel.userSession?.displayName ?? "A friend"
             let text = "\(senderName) shared the '\(collection.name)' collection with you!"
             itemToShare = ShareableContent(text: text, url: url)
+            logger.info("Successfully created public share link for collection: \(collection.name)")
+        } catch {
+            logger.error("Failed to create public share link for collection '\(collection.name)': \(error.localizedDescription)")
         }
     }
 }
 
-fileprivate extension MKMapRect {
-    init(containing coordinates: [CLLocationCoordinate2D]) {
-        self = coordinates.reduce(MKMapRect.null) { rect, coordinate in
-            let point = MKMapPoint(coordinate)
-            return rect.union(MKMapRect(x: point.x, y: point.y, width: 0, height: 0))
-        }
-    }
-}

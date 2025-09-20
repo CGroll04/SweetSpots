@@ -2,11 +2,12 @@
 //  SpotDetailView.swift
 //  SweetSpots
 //
-//  Enhanced version with proper state management and geofencing
+//  Created by Charlie Groll on 2025-09-08.
 //
 
 import SwiftUI
 import MapKit
+import os.log
 
 enum TransportType: String, CaseIterable, Hashable {
     case driving = "Driving"
@@ -23,27 +24,30 @@ enum TransportType: String, CaseIterable, Hashable {
     }
 }
 
+
 enum PresentationContext {
     case list
     case map
 }
 
-// Helper struct for alerts within this view
 fileprivate struct SpotDetailAlertInfo: Identifiable {
     let id = UUID()
     let title: String
     let message: String
 }
 
+/// A view that displays detailed information about a single spot, allowing for editing and other actions.
 struct SpotDetailView: View {
     // MARK: - Environment & State
     @EnvironmentObject private var spotsViewModel: SpotViewModel
-    @EnvironmentObject private var collectionViewModel: CollectionViewModel // ADD THIS LINE
-    @EnvironmentObject private var authViewModel: AuthViewModel // ADD THIS LINE
+    @EnvironmentObject private var collectionViewModel: CollectionViewModel
+    @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var locationManager: LocationManager
     @EnvironmentObject private var navigationViewModel: NavigationViewModel
     @AppStorage("globalGeofencingEnabled") private var globalGeofencingSystemEnabled: Bool = true
     @Environment(\.dismiss) private var dismiss
+    
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "SpotDetailView")
     
     let spotId: String
     let presentedFrom: PresentationContext
@@ -63,7 +67,7 @@ struct SpotDetailView: View {
     // Local state for UI controls, initialized from the spot
     @State private var wantsNearbyNotification: Bool = false
     @State private var notificationRadius: Double = 200.0
-    @State private var selectedRadiusPreset: AddSpotView.RadiusPreset = .medium
+    @State private var selectedRadiusPreset: SpotFormSectionView.RadiusPreset = .medium
     @State private var showingCustomRadiusField: Bool = false
     
     @State private var spotToEdit: Spot? = nil
@@ -71,7 +75,6 @@ struct SpotDetailView: View {
     @State private var showingDeleteConfirmation = false
     
     @State private var itemToShare: ShareableContent? = nil
-
     
     // UI state
     @State private var isSavingChanges: Bool = false
@@ -83,9 +86,14 @@ struct SpotDetailView: View {
     @State private var webViewIsLoading: Bool = false
     @State private var webViewError: Error? = nil
     
+    // MARK: - Initialization
+    init(spotId: String, presentedFrom: PresentationContext) {
+        self.spotId = spotId
+        self.presentedFrom = presentedFrom
+    }
+    
     // MARK: - Body
     var body: some View {
-        // If the spot exists, we show our content.
         if let currentSpot = spot {
             contentView(for: currentSpot)
                 .navigationTitle(currentSpot.name)
@@ -95,91 +103,85 @@ struct SpotDetailView: View {
                     Alert(title: Text(info.title), message: Text(info.message), dismissButton: .default(Text("OK")))
                 }
                 .onAppear {
+                    logger.info("SpotDetailView appeared for spot: \(currentSpot.name) (ID: \(self.spotId))")
                     initializeLocalState(from: currentSpot)
                 }
                 .onChange(of: spotsViewModel.spots) { _, _ in
                     if let latest = spot { initializeLocalState(from: latest) }
                 }
         } else {
-            // If the spot is nil (e.g., deleted), show a fallback view.
+            let _ = logger.warning("SpotDetailView loaded with an invalid or non-existent spotId: \(self.spotId)")
             ContentUnavailableView("Spot Not Found", systemImage: "questionmark.circle", description: Text("This spot may have been deleted."))
                 .navigationTitle("Not Found")
         }
     }
     
     private func initializeLocalState(from spot: Spot) {
-        // Populates our @State vars from the live spot data.
         self.wantsNearbyNotification = spot.wantsNearbyNotification
         self.notificationRadius = spot.notificationRadiusMeters
-        let initialPreset = AddSpotView.RadiusPreset.preset(for: spot.notificationRadiusMeters)
+        let initialPreset = SpotFormSectionView.RadiusPreset.preset(for: spot.notificationRadiusMeters)
         self.selectedRadiusPreset = initialPreset
         self.showingCustomRadiusField = (initialPreset == .custom)
     }
         
-        // MARK: - Main Content View
-        private func contentView(for spot: Spot) -> some View {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    deletedStateBanner(for: spot)
-                    headerSection(for: spot)
-                    mapPreviewSection(for: spot)
-                    if let sourceURLString = spot.sourceURL, let url = URL(string: sourceURLString) {
-                        webPreviewSection(url: url)
-                    }
-                    informationSection(for: spot)
-                    if spot.deletedAt == nil {
-                        notificationSettingsSection(for: spot)
-                        actionsSection(for: spot)
-                    }
-                    Spacer()
+    // MARK: - Main Content View
+    private func contentView(for spot: Spot) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                deletedStateBanner(for: spot)
+                headerSection(for: spot)
+                mapPreviewSection(for: spot)
+                if let sourceURLString = spot.sourceURL, let url = URL(string: sourceURLString) {
+                    webPreviewSection(url: url)
                 }
-                .padding()
-            }
-            .background(Color.themeBackground.ignoresSafeArea())
-            .sheet(item: $spotToEdit) { spot in
-                AddSpotView(
-                    isPresented: Binding(
-                        get: { self.spotToEdit != nil },
-                        set: { if !$0 { self.spotToEdit = nil } }
-                    ),
-                    spotToEdit: spot,
-                    prefilledPayload: nil,
-                    prefilledURL: nil
-                )
-                .environmentObject(spotsViewModel)
-                .environmentObject(collectionViewModel)
-                .environmentObject(locationManager)
-                .environmentObject(navigationViewModel)
-            }
-            .alert(
-                "Delete SweetSpot",
-                isPresented: $showingDeleteConfirmation,
-                presenting: spotToDelete
-            ) { spot in
-                Button("Delete", role: .destructive) {
-                    spotsViewModel.deleteSpot(spot) { _ in
-                        // After deleting, dismiss the detail view
-                        self.dismiss()
-                    }
+                informationSection(for: spot)
+                if spot.deletedAt == nil {
+                    notificationSettingsSection(for: spot)
+                    actionsSection(for: spot)
                 }
-                Button("Cancel", role: .cancel) {}
-            } message: { spot in
-                Text("This will move \"\(spot.name)\" to the Recently Deleted section, where it will be permanently deleted after 30 days.")
+                Spacer()
             }
-            .sheet(item: $itemToShare) { item in
-                ShareSheet(items: [item.text, item.url])
-            }
+            .padding()
         }
+        .background(Color.themeBackground.ignoresSafeArea())
+        .sheet(item: $spotToEdit) { spot in
+            AddSpotView(
+                isPresented: Binding(
+                    get: { self.spotToEdit != nil },
+                    set: { if !$0 { self.spotToEdit = nil } }
+                ),
+                spotToEdit: spot,
+                prefilledPayload: nil,
+                prefilledURL: nil
+            )
+        }
+        .alert(
+            "Delete SweetSpot",
+            isPresented: $showingDeleteConfirmation,
+            presenting: spotToDelete
+        ) { spot in
+            Button("Delete", role: .destructive) {
+                spotsViewModel.deleteSpot(spot) { _ in
+                    self.dismiss()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { spot in
+            Text("This will move \"\(spot.name)\" to the Recently Deleted section, where it will be permanently deleted after 30 days.")
+        }
+        .sheet(item: $itemToShare) { item in
+            ShareSheet(items: [item.text, item.url])
+        }
+    }
 
-        // MARK: - Computed Properties
-        private func hasNotificationChanges(for spot: Spot) -> Bool {
-            // Compare our local @State vars to the live `spot` data.
-            if wantsNearbyNotification != spot.wantsNearbyNotification { return true }
-            if wantsNearbyNotification && !notificationRadius.isApproximately(spot.notificationRadiusMeters, tolerance: 0.1) { return true }
-            return false
-        }
-        
-        // MARK: - Toolbar & Actions
+    // MARK: - Computed Properties
+    private func hasNotificationChanges(for spot: Spot) -> Bool {
+        if wantsNearbyNotification != spot.wantsNearbyNotification { return true }
+        if wantsNearbyNotification && !notificationRadius.isApproximately(spot.notificationRadiusMeters, tolerance: 0.1) { return true }
+        return false
+    }
+    
+    // MARK: - Toolbar & Actions
     @ToolbarContentBuilder
     private func toolbarContent(for spot: Spot) -> some ToolbarContent {
         if spot.deletedAt != nil {
@@ -207,7 +209,6 @@ struct SpotDetailView: View {
             }
         }
 
-        // Share button (just sets state)
         ToolbarItem(placement: .navigationBarTrailing) {
             Button {
                 Task {
@@ -225,9 +226,6 @@ struct SpotDetailView: View {
                         self.spotToDelete = spot
                         self.showingDeleteConfirmation = true
                     },
-//                    onIncrement: { spotsViewModel.incrementVisitCount(for: spot) },
-//                    onDecrement: { spotsViewModel.decrementVisitCount(for: spot) },
-//                    onReset: { spotsViewModel.resetVisitCount(for: spot) },
                     onShare: {
                         Task {
                             await handleShare(for: spot)
@@ -239,25 +237,23 @@ struct SpotDetailView: View {
     }
     
     private func handleShare(for spot: Spot) async {
-        guard let userId = authViewModel.userSession?.uid else { return } // <-- GET USER ID
+        guard let userId = authViewModel.userSession?.uid else { return }
 
         do {
-            let collectionName: String? = nil
             let senderName = authViewModel.userSession?.displayName
-
             let url = try await SpotShareManager.makeShareURL(
                 from: spot,
-                collectionName: collectionName,
+                collectionName: nil,
                 senderName: senderName,
                 userId: userId
             )
 
             let text = senderName != nil ? "\(senderName!) shared '\(spot.name)' with you!" : "Check out '\(spot.name)' on SweetSpots!"
             itemToShare = ShareableContent(text: text, url: url)
-
+            logger.info("Successfully created share link for spot: \(spot.name)")
         } catch {
-            print("SpotDetailView: Failed to create share link: \(error)")
-            // Optionally, show an error alert here
+            logger.error("Failed to create share link for spot '\(spot.name)': \(error.localizedDescription)")
+            alertInfo = SpotDetailAlertInfo(title: "Share Error", message: "Could not create a share link. Please try again.")
         }
     }
     
@@ -311,7 +307,7 @@ struct SpotDetailView: View {
             .padding(.top, 8)
             ZStack {
                 WebView(
-                    webView: webViewStore.webView, // Pass the persistent webView from the store
+                    webView: webViewStore.webView,
                     request: URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad),
                     isLoading: $webViewIsLoading,
                     loadingError: $webViewError
@@ -343,22 +339,14 @@ struct SpotDetailView: View {
         VStack(alignment: .leading, spacing: 16) {
             DetailRow(iconName: "mappin.and.ellipse", title: "Address", content: spot.address)
             DetailRow(iconName: spot.category.systemImageName, title: "Category", content: spot.category.displayName, contentColor: Color.themePrimary)
-            // ADDED: Display the collection if the spot belongs to one
             if !spot.collectionIds.isEmpty {
-                // Find all collection objects that match the IDs in the spot's array
                 let collections = collectionViewModel.collections.filter { spot.collectionIds.contains($0.id ?? "") }
-
-                // Use a DetailRow that can display multiple items
                 DetailRow(iconName: "tray.fill", title: "Collections") {
-                    // Create a comma-separated string of the collection names
                     Text(collections.map { $0.name }.joined(separator: ", "))
                         .foregroundStyle(Color.themePrimary)
                 }
             }
             
-            // ADDED: Display the visit count
-//            DetailRow(iconName: "checkmark.circle.fill", title: "Times Visited", content: "\(spot.visitCount)")
-
             if let phone = spot.phoneNumber, !phone.isEmpty {
                 DetailRow(iconName: "phone.fill", title: "Phone") {
                     if let telURL = URL(string: "tel:\(phone.filter("0123456789+".contains))") {
@@ -369,13 +357,13 @@ struct SpotDetailView: View {
             if let website = spot.websiteURL, let webURL = URL(string: website) {
                 DetailRow(iconName: "safari.fill", title: "Website") {
                     Link(destination: webURL) { Text(webURL.host?.replacingOccurrences(of: "www.", with: "") ?? website).lineLimit(1).truncationMode(.middle) }
-                    .foregroundStyle(.blue)
+                        .foregroundStyle(.blue)
                 }
             }
             if let source = spot.sourceURL, let sourceURL = URL(string: source), source != spot.websiteURL {
                 DetailRow(iconName: "arrow.up.forward.app", title: "Original Source") {
                     Link(destination: sourceURL) { Text(sourceURL.host?.replacingOccurrences(of: "www.", with: "") ?? "View Source").lineLimit(1).truncationMode(.middle) }
-                    .foregroundStyle(.blue)
+                        .foregroundStyle(.blue)
                 }
             }
             DetailRow(iconName: "calendar", title: "Date Added", content: spot.createdAt?.dateValue() ?? Date(), style: .date)
@@ -385,7 +373,7 @@ struct SpotDetailView: View {
                     Text(notes)
                         .font(.body)
                         .foregroundStyle(Color.themeTextSecondary)
-                        .frame(maxWidth: .infinity, alignment: .leading) // Ensure text aligns left
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
@@ -411,18 +399,16 @@ struct SpotDetailView: View {
                     .tint(Color.themePrimary)
                     .disabled(!globalGeofencingSystemEnabled || isSavingChanges)
                     .onChange(of: wantsNearbyNotification) { _, isNowEnabled in
-                        // If the user just toggled it ON...
                         if isNowEnabled {
-                            // ...and we don't have the required permission...
                             if locationManager.authorizationStatus != .authorizedAlways {
-                                print("SpotDetailView: Notification enabled, but 'Always' permission is missing. Requesting upgrade.")
+                                logger.info("Notification enabled, but 'Always' permission is missing. Requesting upgrade.")
                                 locationManager.requestLocationAuthorization(aimForAlways: true)
                             }
                         }
                     }
                 if wantsNearbyNotification && globalGeofencingSystemEnabled {
                     Picker("Notification Distance", selection: $selectedRadiusPreset) {
-                        ForEach(AddSpotView.RadiusPreset.allCases) { preset in Text(preset.rawValue).tag(preset) }
+                        ForEach(SpotFormSectionView.RadiusPreset.allCases) { preset in Text(preset.rawValue).tag(preset) }
                     }
                     .tint(Color.themePrimary).disabled(isSavingChanges)
                     .onChange(of: selectedRadiusPreset) { _, newPreset in
@@ -434,7 +420,7 @@ struct SpotDetailView: View {
                         HStack {
                             Text("Custom (meters):")
                             Spacer()
-                            TextField("e.g., 150", value: $notificationRadius, formatter: radiusNumberFormatter())
+                            TextField("e.g., 150", value: $notificationRadius, formatter: NumberFormatters.distance)
                                 .keyboardType(.decimalPad).multilineTextAlignment(.trailing)
                                 .frame(width: 100).textFieldStyle(.roundedBorder).disabled(isSavingChanges)
                         }
@@ -451,7 +437,6 @@ struct SpotDetailView: View {
     
     @ViewBuilder
     private func deletedStateBanner(for spot: Spot) -> some View {
-        // Only show this banner if the spot is soft-deleted
         if spot.deletedAt != nil {
             VStack(spacing: 8) {
                 Text("This spot is in Recently Deleted.")
@@ -459,10 +444,9 @@ struct SpotDetailView: View {
                     .foregroundStyle(.secondary)
                 
                 HStack {
-                    // RESTORE BUTTON
                     Button {
                         spotsViewModel.restoreSpot(spot)
-                        dismiss() // Close the detail view after restoring
+                        dismiss()
                     } label: {
                         Label("Restore Spot", systemImage: "arrow.uturn.backward.circle.fill")
                             .fontWeight(.semibold)
@@ -471,10 +455,9 @@ struct SpotDetailView: View {
                     .buttonStyle(.bordered)
                     .tint(.green)
                     
-                    // DELETE PERMANENTLY BUTTON
                     Button(role: .destructive) {
                         spotsViewModel.permanentlyDeleteSpot(spot)
-                        dismiss() // Close the detail view after deleting
+                        dismiss()
                     } label: {
                         Label("Delete Permanently", systemImage: "trash.fill")
                             .fontWeight(.semibold)
@@ -497,6 +480,7 @@ struct SpotDetailView: View {
     
     private func getDirections(for spot: Spot) {
         guard let userLocation = locationManager.userLocation else {
+            logger.info("User requested directions but location is unavailable. Prompting for location update.")
             locationManager.startUpdatingUserLocation()
             alertInfo = SpotDetailAlertInfo(title: "Finding Your Location", message: "Please wait a moment while we find your current location, then try again.")
             return
@@ -514,6 +498,7 @@ struct SpotDetailView: View {
     
     private func saveNotificationSettings(for spot: Spot) {
         if wantsNearbyNotification && (notificationRadius < 50 || notificationRadius > 50000) {
+            logger.debug("Save notification settings failed: invalid radius provided.")
             alertInfo = SpotDetailAlertInfo(title: "Invalid Radius", message: "Radius must be between 50 and 50,000 meters.")
             return
         }
@@ -526,63 +511,13 @@ struct SpotDetailView: View {
             self.isSavingChanges = false
             switch result {
             case .success:
+                self.logger.info("Successfully saved notification settings for spot '\(spot.name)'.")
                 self.showSaveConfirmation = true
                 self.locationManager.synchronizeGeofences(forSpots: self.spotsViewModel.spots, globallyEnabled: self.globalGeofencingSystemEnabled)
             case .failure(let error):
+                self.logger.error("Failed to save notification settings for spot '\(spot.name)': \(error.localizedDescription)")
                 self.alertInfo = SpotDetailAlertInfo(title: "Update Failed", message: "Could not save settings: \(error.localizedDescription)")
             }
         }
-    }
-    
-    private func radiusNumberFormatter() -> NumberFormatter {
-        let formatter = NumberFormatter(); formatter.numberStyle = .decimal; formatter.minimum = 50; formatter.maximum = 50000; formatter.maximumFractionDigits = 0; return formatter
-    }
-}
-
-// MARK: - Reusable DetailRow View & Extensions (keeping existing implementation)
-private struct DetailRow<Content: View>: View {
-    let iconName: String
-    let title: String
-    let contentBody: Content
-    
-    init(iconName: String, title: String, @ViewBuilder content: () -> Content) {
-        self.iconName = iconName
-        self.title = title
-        self.contentBody = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 10) {
-                Image(systemName: iconName)
-                    .font(.headline)
-                    .foregroundStyle(Color.themePrimary)
-                    .frame(width: 24, alignment: .center)
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(Color.themeTextPrimary)
-            }
-            HStack {
-                Spacer().frame(width: 24 + 10)
-                contentBody
-                    .padding(.top, 2)
-                Spacer()
-            }
-        }
-        .padding(.vertical, 6)
-    }
-}
-
-extension DetailRow where Content == Text {
-    init(iconName: String, title: String, content: String, contentColor: Color = Color.themeTextSecondary) {
-        self.iconName = iconName
-        self.title = title
-        self.contentBody = Text(content).font(.body).foregroundStyle(contentColor)
-    }
-
-    init(iconName: String, title: String, content: Date, style: Text.DateStyle, contentColor: Color = Color.themeTextSecondary) {
-        self.iconName = iconName
-        self.title = title
-        self.contentBody = Text(content, style: style).font(.body).foregroundStyle(contentColor)
     }
 }

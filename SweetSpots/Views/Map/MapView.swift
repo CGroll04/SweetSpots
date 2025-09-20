@@ -7,6 +7,7 @@
 
 import SwiftUI
 import MapKit
+import os.log
 
 struct MapView: View {
     // MARK: - Environment Objects
@@ -15,11 +16,12 @@ struct MapView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
     @EnvironmentObject private var navigationViewModel: NavigationViewModel
-    
 
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "MapView")
+    
     // MARK: - State Variables
-    @State private var showingAddSheet: Bool = false // 1. ADD THIS STATE
-    @State private var showingSettingsSheet = false // <-- ADD THIS
+    @State private var showingAddSheet: Bool = false
+    @State private var showingSettingsSheet = false
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var viewingRegion: MKCoordinateRegion? = nil
     
@@ -30,7 +32,7 @@ struct MapView: View {
     @State private var showClarityPopup: Bool = false
     @State private var popupTask: Task<Void, Never>?
     
-    @State private var isNavigating: Bool = false // <<<< NEW: To track
+    @State private var isNavigating: Bool = false
 
     @State private var selectedCategoryFilters: Set<SpotCategory> = []
     @State private var initialCameraHasBeenSet = false
@@ -71,7 +73,7 @@ struct MapView: View {
     // MARK: - Body
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .bottom) { // Use ZStack to overlay navigation UI
+            ZStack(alignment: .bottomTrailing) { // Use ZStack to overlay navigation UI
                 // mapViewWithOverlays should have NO modifiers here
                 mapViewWithOverlays
 
@@ -128,7 +130,6 @@ struct MapView: View {
                         // Wait for 2 seconds
                         try? await Task.sleep(for: .seconds(2))
                         
-                        // Now, hide the popup with an animation
                         withAnimation {
                             showClarityPopup = false
                         }
@@ -138,34 +139,40 @@ struct MapView: View {
             .toolbar {
                 // Do not show the toolbar during turn-by-turn navigation
                 if !navigationViewModel.isNavigating {
-                    // Title on the left
-                    ToolbarItemGroup(placement: .navigationBarLeading) {
-                        Text("My SweetSpots")
-                            .font(.title2)
-                            .fontWeight(.bold)
+                    ToolbarItemGroup(placement: .topBarLeading) {
+                        HStack {
+                            Text("My SweetSpots")
+                                .font(.headline)
+                                .fontWeight(.bold)
+                                .fixedSize()
+                        }
+                        .padding(.horizontal)
                     }
                     
                     // Buttons on the right
-                    ToolbarItemGroup(placement: .navigationBarTrailing) {
-                        
-                        Button {
-                            showingAddSheet = true
-                        } label: {
-                            Image(systemName: "plus")
-                                .foregroundStyle(Color.themePrimary)
-                        }
-                        
-                        mapCategoryFilterMenu()
-                        geofenceToggleButton()
-                        
-                        Button {
-                            showingSettingsSheet = true
-                        } label: {
-                            Label("Settings", systemImage: "gearshape")
+                    ToolbarItem(placement: .topBarTrailing) {
+                        HStack(spacing: 8) { // Adjust the spacing to your liking
+                            
+                            Button {
+                                showingAddSheet = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .foregroundStyle(Color.themePrimary)
+                            }
+                            
+                            mapCategoryFilterMenu()
+                            geofenceToggleButton()
+                            
+                            Button {
+                                showingSettingsSheet = true
+                            } label: {
+                                Label("Settings", systemImage: "gearshape")
+                            }
                         }
                     }
                 }
             }
+            .navigationBarBackButtonHidden(true)
             .sheet(isPresented: $showingAddSheet) {
                 AddSpotView(isPresented: $showingAddSheet, spotToEdit: nil, prefilledPayload: nil, prefilledURL: nil)
                     .environmentObject(spotsViewModel)
@@ -207,6 +214,7 @@ struct MapView: View {
                 
                 Spacer()
             }
+            .frame(maxWidth: .infinity)
             .padding(.bottom, 100)
             .allowsHitTesting(false)
         }
@@ -242,7 +250,7 @@ struct MapView: View {
     private var mapViewWithOverlays: some View {
         coreMapView
             .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .all, showsTraffic: false))
-            .mapControls { MapPitchToggle(); MapCompass() }
+            .mapControls { MapPitchToggle();}
             .overlay(alignment: .bottomTrailing) {
                 MapZoomControls(
                     currentRegion: $viewingRegion, // Pass the binding
@@ -252,29 +260,29 @@ struct MapView: View {
                 .padding(.trailing, 15)
                 .padding(.bottom, 80)
             }
-            .overlay(alignment: .topLeading) { // <<<< SINGLE .topLeading OVERLAY
-                VStack(alignment: .leading, spacing: 8) { // Arrange vertically
+            .overlay(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 12) { // Arrange vertically
+                    
+                    if globalGeofencingEnabled && !spotsWithGeofences.isEmpty {
+                        geofenceStatusOverlay()
+                    }
+                    
                     // Always show route info if it exists
                     if navigationViewModel.isCalculatingRoute || navigationViewModel.route != nil || navigationViewModel.routeCalculationError != nil {
                         RouteInfoCard()
                     }
-
-                    // Show geofence status if applicable and no route is showing
-                    // Or you can decide to show both. Let's show both.
-                    if globalGeofencingEnabled && !spotsWithGeofences.isEmpty {
-                        geofenceStatusOverlay()
-                    }
                 }
+                .padding(.top, 100)
+                .padding(.leading)
             }
             .sheet(item: $selectedSpot) { spot in
-                // We now initialize SpotDetailView with the ID from the selected spot.
                 SpotDetailView(spotId: spot.id ?? "", presentedFrom: .map)
-                    .environmentObject(authViewModel)
+                    .presentationDetents([.medium, .large])
                     .environmentObject(spotsViewModel)
+                    .environmentObject(authViewModel)
                     .environmentObject(locationManager)
                     .environmentObject(collectionViewModel)
                     .environmentObject(navigationViewModel)
-                    .presentationDetents([.medium, .large])
             }
             .onMapCameraChange(frequency: .onEnd) { context in
                 self.viewingRegion = context.region
@@ -304,7 +312,6 @@ struct MapView: View {
                     .foregroundColor(.blue)
                     .font(.caption)
                 
-                // This now correctly shows "1 Active Alert" or "X Active Alerts"
                 Text("\(spotsWithGeofences.count) Active Alert\(spotsWithGeofences.count == 1 ? "" : "s")")
                     .font(.caption)
                     .fontWeight(.medium)
@@ -366,7 +373,7 @@ struct MapView: View {
         }
         
         if let userCoordinate = locationManager.userLocation?.coordinate, !initialCameraHasBeenSet {
-            print("MapView: User location available on appear, setting initial camera.")
+            logger.info("User location available on appear, setting initial camera.")
             let userRegion = MKCoordinateRegion(
                 center: userCoordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
@@ -390,9 +397,7 @@ struct MapView: View {
     }
     
     private func handleRouteChange(_ oldRoute: MKRoute?, _ newRoute: MKRoute?) {
-        // This function is now just for setting the camera when a route first appears
         if let route = newRoute, !navigationViewModel.isNavigating {
-            // This case should not happen in the new flow, but as a fallback:
             let rect = route.polyline.boundingMapRect
             withAnimation(.easeOut(duration: 0.7)) { cameraPosition = .rect(rect.paddedBy(factor: 1.4)) }
         } else if newRoute == nil {
@@ -424,13 +429,13 @@ struct MapView: View {
             return
         }
         
-        print("MapView: Navigating to spot from geofence notification: \(spotId)")
+        logger.info("Navigating to spot from geofence notification: \(spotId)")
         navigateToSpot(spotId: spotId)
     }
     
     private func navigateToSpot(spotId: String) {
         guard let spot = spotsViewModel.spots.first(where: { $0.id == spotId }) else {
-            print("MapView: Could not find spot with ID: \(spotId)")
+            logger.info("Could not find spot with ID: \(spotId)")
             return
         }
         
@@ -444,7 +449,7 @@ struct MapView: View {
             ))
         }
         
-        print("MapView: Navigated to spot '\(spot.name)'")
+        logger.info("Navigated to spot '\(spot.name)'")
     }
     
     private func findSpotIdFromAlert(_ alertDetails: LocationManager.GeofenceAlertInfo) -> String? {
@@ -475,18 +480,18 @@ struct MapView: View {
 
         if !initialCameraHasBeenSet {
             if let userCoordinate = locationManager.userLocation?.coordinate {
-                print("MapView: Fallback - User location became available, setting camera.")
+                logger.info("Fallback - User location became available, setting camera.")
                 let userRegion = MKCoordinateRegion(center: userCoordinate, span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1))
                 withAnimation { cameraPosition = .region(userRegion) }
                 viewingRegion = userRegion
                 initialCameraHasBeenSet = true
             } else if let firstSpot = spotsViewModel.spots.first {
-                print("MapView: Fallback - No user location, centering on first spot.")
+                logger.info("Fallback - No user location, centering on first spot.")
                 let firstSpotRegion = MKCoordinateRegion(center: firstSpot.coordinate, span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1))
                 withAnimation { cameraPosition = .region(firstSpotRegion) }
                 viewingRegion = firstSpotRegion
             } else {
-                print("MapView: Fallback - No user location and no spots, using default region.")
+                logger.info("Fallback - No user location and no spots, using default region.")
             }
         }
     }
@@ -578,7 +583,7 @@ struct SpotAnnotationView: View {
     }
     
     private var backgroundColor: Color {
-        isSelected ? .blue : colorFromString(spot.category.associatedColor)
+        isSelected ? .blue : Color.from(name: spot.category.associatedColor)
     }
     
     private var annotationSize: CGFloat {
@@ -587,19 +592,6 @@ struct SpotAnnotationView: View {
     
     private var iconSize: CGFloat {
         isSelected ? 20 : 16
-    }
-    
-    private func colorFromString(_ colorName: String) -> Color {
-        switch colorName {
-        case "orange": return .orange
-        case "green": return .green
-        case "purple": return .purple
-        case "blue": return .blue
-        case "red": return .red
-        case "teal": return .teal
-        case "indigo": return .indigo
-        default: return .blue
-        }
     }
 }
 
@@ -752,7 +744,6 @@ private struct TurnByTurnInstructionView: View {
         VStack(spacing: 8) {
             // Next step instruction
             HStack {
-                // You could add an icon for the maneuver here (e.g., turn left arrow)
                 Text(navigationViewModel.nextStepInstruction)
                     .font(.title2)
                     .fontWeight(.bold)

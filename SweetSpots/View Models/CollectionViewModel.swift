@@ -7,6 +7,7 @@
 
 import SwiftUI
 import FirebaseFirestore
+import os.log
 
 // MARK: - Collection Error Types
 enum CollectionError: LocalizedError {
@@ -39,7 +40,10 @@ enum CollectionError: LocalizedError {
 }
 
 @MainActor
+/// Manages the state and operations for user-created collections of spots.
 class CollectionViewModel: ObservableObject {
+    
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "CollectionViewModel")
     
     public enum DeletionMode {
             case collectionOnly // Uncategorize spots
@@ -55,6 +59,7 @@ class CollectionViewModel: ObservableObject {
 
     // Deinitializer to remove listener
     deinit {
+        logger.debug("CollectionViewModel deinitialized, listener removed.")
         collectionsListenerRegistration?.remove()
     }
 
@@ -85,7 +90,7 @@ class CollectionViewModel: ObservableObject {
 
                     if let error = error {
                         self.errorMessage = "Error fetching collections: \(error.localizedDescription)"
-                        print("CollectionViewModel: Error fetching collections: \(error.localizedDescription)")
+                        logger.error("Error fetching collections: \(error.localizedDescription)")
                         return
                     }
 
@@ -102,9 +107,9 @@ class CollectionViewModel: ObservableObject {
                         do {
                             let collection = try document.data(as: SpotCollection.self)
                             decodedCollections.append(collection)
-                            print("CollectionViewModel: Decoded collection '\(collection.name)' (ID: \(collection.id ?? "nil"))")
+                            logger.debug("Decoded collection '\(collection.name)' (ID: \(collection.id ?? "nil"))")
                         } catch {
-                            print("CollectionViewModel: Error decoding collection \(document.documentID): \(error.localizedDescription). Data: \(document.data())")
+                            logger.warning("Error decoding collection \(document.documentID): \(error.localizedDescription).")
                             hasDecodingErrors = true
                         }
                     }
@@ -120,7 +125,7 @@ class CollectionViewModel: ObservableObject {
                         self.errorMessage = nil
                     }
                     
-                    print("CollectionViewModel: Collections array updated. Count: \(self.collections.count)")
+                    logger.info("Collections listener updated. Total collections: \(self.collections.count)")
                 }
             }
     }
@@ -149,13 +154,13 @@ class CollectionViewModel: ObservableObject {
             
             self.collections.insert(newCollection, at: 0)
             
-            print("CollectionViewModel: Successfully added collection '\(trimmedName)' with ID: \(newId)")
+            logger.info("Successfully added collection '\(trimmedName)' with ID: \(newId)")
             
             // Return the new ID on success.
             return newId
             
         } catch {
-            print("ERROR: Failed to add collection to Firestore: \(error.localizedDescription)")
+            logger.error("Failed to add collection to Firestore: \(error.localizedDescription)")
             throw CollectionError.firestoreError(underlyingError: error)
         }
     }
@@ -179,7 +184,6 @@ class CollectionViewModel: ObservableObject {
         
         isLoading = true
         
-        // --- CORRECTED LOGIC ---
         // 1. Manually create a dictionary to ensure we can handle field deletion.
         var updateData: [String: Any] = [
             "name": trimmedName
@@ -194,18 +198,16 @@ class CollectionViewModel: ObservableObject {
         }
         
         let docRef = userCollectionsRef(userId: collection.userId).document(collectionId)
-        
-        // 3. Use `updateData` instead of `setData(from:merge:)`
         docRef.updateData(updateData) { [weak self] error in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 self.isLoading = false
                 
                 if let error = error {
-                    print("CollectionViewModel: Failed to update collection '\(trimmedName)': \(error.localizedDescription)")
+                    logger.error("Failed to update collection '\(trimmedName)': \(error.localizedDescription)")
                     completion(.failure(CollectionError.firestoreError(underlyingError: error)))
                 } else {
-                    print("CollectionViewModel: Successfully updated collection '\(trimmedName)'")
+                    logger.info("Successfully updated collection '\(trimmedName)'")
                     // Note: The local listener will automatically handle the UI update.
                     completion(.success(()))
                 }
@@ -217,41 +219,38 @@ class CollectionViewModel: ObservableObject {
     func deleteCollection(
         _ collection: SpotCollection,
         mode: DeletionMode,
-        allSpots: [Spot], // We need all spots to find the ones to update
-        completion: @escaping (Result<Void, Error>) -> Void
-    ) {
+        allSpots: [Spot]
+    ) async throws { // Changed to async throws, removed completion handler
         guard let collectionId = collection.id, !collection.userId.isEmpty else {
-            completion(.failure(CollectionError.missingIDs))
-            return
+            throw CollectionError.missingIDs
         }
         
+        // This logic is now cleaner with async/await
         isLoading = true
         
-        // **CORRECTED:** Find spots where `collectionIds` array contains the ID
         let spotsToUpdate = allSpots.filter { $0.collectionIds.contains(collectionId) }
         
-        Task {
-            do {
-                // First, handle all the associated spot updates in a batch
-                try await handleSpotUpdates(
-                    for: mode,
-                    spots: spotsToUpdate,
-                    collectionIdToRemove: collectionId,
-                    userId: collection.userId
-                )
-                
-                // If spot updates succeed, delete the collection document itself
-                try await deleteCollectionDocument(collection)
-                
-                // If everything succeeds, complete on the main thread
+        // Use a do-catch block to handle errors
+        do {
+            try await handleSpotUpdates(
+                for: mode,
+                spots: spotsToUpdate,
+                collectionIdToRemove: collectionId,
+                userId: collection.userId
+            )
+            
+            try await deleteCollectionDocument(collection)
+            
+            // On success, simply finish the function
+            await MainActor.run {
                 self.isLoading = false
-                completion(.success(()))
-                
-            } catch {
-                // If any step fails, report the error
-                self.isLoading = false
-                completion(.failure(error))
             }
+        } catch {
+            // If any step fails, throw the error
+            await MainActor.run {
+                self.isLoading = false
+            }
+            throw error // The calling view will catch this
         }
     }
     
@@ -276,7 +275,6 @@ class CollectionViewModel: ObservableObject {
             
             switch mode {
             case .collectionOnly:
-                // **CORRECTED:** Use FieldValue.arrayRemove to pull the ID from the array
                 batch.updateData(["collectionIds": FieldValue.arrayRemove([collectionIdToRemove])], forDocument: docRef)
                 
             case .collectionAndSpots:
@@ -288,8 +286,6 @@ class CollectionViewModel: ObservableObject {
         // Asynchronously commit the batch and throw an error if it fails
         try await batch.commit()
     }
-
-    // 4. New private helper to just delete the Firestore document
     private func deleteCollectionDocument(_ collection: SpotCollection) async throws {
         guard let collectionId = collection.id else {
             throw CollectionError.missingIDs
@@ -306,7 +302,7 @@ class CollectionViewModel: ObservableObject {
     func detachCollectionsListener() {
         collectionsListenerRegistration?.remove()
         collectionsListenerRegistration = nil
-        print("CollectionViewModel: Detached collections listener.")
+        logger.info("Detached collections listener.")
     }
     
     /// Checks if a collection name is a duplicate for the given user
@@ -347,40 +343,4 @@ class CollectionViewModel: ObservableObject {
     }
 }
 
-enum FirestoreWrapperError: Error, LocalizedError {
-    case unexpectedNilReference
-    
-    var errorDescription: String? {
-        "An unexpected error occurred while communicating with the database."
-    }
-}
 
-extension CollectionReference {
-    /// A modern async/await wrapper for adding a document that correctly handles all error paths.
-    @discardableResult
-    func addDocument<T: Encodable>(from data: T) async throws -> DocumentReference {
-        try await withCheckedThrowingContinuation { continuation in
-            var ref: DocumentReference?
-            
-            do {
-                // The call to addDocument(from:completion:) can itself throw an
-                // encoding error, so we must wrap it in a `do-catch`.
-                ref = try self.addDocument(from: data) { error in
-                    if let error = error {
-                        // This handles network errors from the completion handler.
-                        continuation.resume(throwing: error)
-                    } else if let ref = ref {
-                        // This handles the success case.
-                        continuation.resume(returning: ref)
-                    } else {
-                        // This handles the unlikely case of no error and no reference.
-                        continuation.resume(throwing: FirestoreWrapperError.unexpectedNilReference)
-                    }
-                }
-            } catch {
-                // This handles encoding errors thrown synchronously by `addDocument`.
-                continuation.resume(throwing: error)
-            }
-        }
-    }
-}

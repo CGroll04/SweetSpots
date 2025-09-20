@@ -6,18 +6,13 @@
 //
 
 import SwiftUI
+import os.log
 
-// Make SharedSpotPayload Hashable so we can use it in a Set
-extension SharedSpotPayload: Hashable {
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(name)
-        hasher.combine(address)
-        hasher.combine(latitude)
-        hasher.combine(longitude)
-    }
-}
-
+/// A view for importing a shared collection, allowing the user to resolve conflicts before saving.
 struct ImportCollectionView: View {
+    
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "ImportCollectionView")
+    
     // MARK: - Environment & State
     @EnvironmentObject private var spotsViewModel: SpotViewModel
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
@@ -72,8 +67,6 @@ struct ImportCollectionView: View {
                 
                 // Action Buttons
                 VStack {
-                    // The "Select All" button has been removed.
-
                     Button(action: handleSave) {
                         HStack {
                             Spacer()
@@ -177,7 +170,10 @@ struct ImportCollectionView: View {
     }
     
     private func saveData(with collectionName: String) async {
-        guard let userId = authViewModel.userSession?.uid else { return }
+        guard let userId = authViewModel.userSession?.uid else {
+            logger.fault("Cannot save imported collection: user ID is missing.")
+            return
+        }
         isSaving = true
 
         do {
@@ -215,69 +211,26 @@ struct ImportCollectionView: View {
             }
 
             // Perform the batch operations
-            spotsViewModel.addMultipleSpots(spotsToCreate) { _ in }
+            spotsViewModel.addMultipleSpots(spotsToCreate) { result in
+                if case .failure(let error) = result {
+                    self.logger.error("Failed to batch-create imported spots: \(error.localizedDescription)")
+                }
+            }
             for spot in spotsToUpdate {
-                spotsViewModel.updateSpot(spot) { _ in }
+                spotsViewModel.updateSpot(spot) { result in
+                    if case .failure(let error) = result {
+                        self.logger.error("Failed to update spot '\(spot.name)' during import: \(error.localizedDescription)")
+                    }
+                }
             }
 
-            print("Successfully imported collection with resolved spots.")
+            logger.info("Successfully imported collection '\(collectionName)' with \(spotsToCreate.count) new spots and \(spotsToUpdate.count) updated spots.")
             isPresented = false
-
         } catch {
-            print("Error creating new collection: \(error.localizedDescription)")
+            logger.error("Error creating new collection '(collectionName)': (error.localizedDescription)")
             isSaving = false
         }
     }
 }
 
-struct SpotImportRow: View {
-    @Binding var importableSpot: ImportableSpot
 
-    var body: some View {
-        HStack {
-            // Display an icon based on the import state
-            Image(systemName: iconName)
-                .font(.title2)
-                .foregroundStyle(iconColor)
-                .frame(width: 30)
-
-            VStack(alignment: .leading) {
-                Text(importableSpot.payload.name).fontWeight(.semibold)
-                Text(statusText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    // Helper properties to determine the row's appearance
-    private var iconName: String {
-        switch importableSpot.state {
-        case .new: return "checkmark.circle.fill"
-        case .conflict: return "exclamationmark.triangle.fill"
-        case .resolved(let resolution):
-            switch resolution {
-            case .keepOriginal: return "shield.slash.fill"
-            case .updateWithImported: return "checkmark.circle.fill"
-            case .saveAsDuplicate: return "plus.circle.fill"
-            }
-        }
-    }
-
-    private var iconColor: Color {
-        switch importableSpot.state {
-        case .new: return .green
-        case .conflict: return .orange
-        case .resolved: return .blue
-        }
-    }
-
-    private var statusText: String {
-        switch importableSpot.state {
-        case .new: return "Ready to import."
-        case .conflict: return "Conflict: You already have this spot."
-        case .resolved(let resolution): return "Resolved: \(resolution.rawValue)."
-        }
-    }
-}

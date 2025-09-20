@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+/// A card-style view that displays a summary of a single spot collection.
 struct CollectionCardView: View {
     let collection: SpotCollection
     let spotCount: Int

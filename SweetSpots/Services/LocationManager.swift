@@ -2,12 +2,12 @@
 //  LocationManager.swift
 //  SweetSpots
 //
-//  Enhanced version with edge case handling
 //
 
 import SwiftUI
 import CoreLocation
 import UserNotifications
+import os.log
 
 /// Manages location services, including user location updates, permission handling, and geofencing.
 @MainActor
@@ -16,7 +16,7 @@ class LocationManager: NSObject, ObservableObject {
     private static let monitoredSpotDetailsKey = "monitoredSpotDetailsKey"
     private static let recentNotificationsKey = "recentNotificationsKey"
     private static let maxGeofences = 20
-    private static let notificationCooldownMinutes: TimeInterval = 120 * 60 // 30 minutes
+    private static let notificationCooldownMinutes: TimeInterval = 120 * 60 // 120 minutes
     private static let significantLocationChangeThreshold: CLLocationDistance = 1000 // 1km
     
     // MARK: - Published Properties
@@ -26,6 +26,10 @@ class LocationManager: NSObject, ObservableObject {
     @Published var geofenceTriggeredAlert: GeofenceAlertInfo? = nil
     
     @Published var showPermissionAlert = false
+    
+    
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "LocationManager")
+    
     
     // MARK: - Private Properties
     private var _monitoredSpotDetails: [String: String] = [:]
@@ -45,6 +49,8 @@ class LocationManager: NSObject, ObservableObject {
     
     // Pending synchronization flag to prevent multiple simultaneous syncs
     private var isSynchronizing = false
+    
+    var onReprioritizationNeeded: (() -> Void)?
     
     struct GeofenceAlertInfo: Identifiable {
         let id = UUID()
@@ -71,7 +77,6 @@ class LocationManager: NSObject, ObservableObject {
     }
     
     private func setupAppStateObservers() {
-        // Remove the old observer and add these new ones with proper concurrency handling:
         NotificationCenter.default.addObserver(
             forName: .applicationWillEnterForeground,
             object: nil,
@@ -116,21 +121,21 @@ class LocationManager: NSObject, ObservableObject {
     
     func setupGeofencingWithPermissions(forSpots spots: [Spot], globallyEnabled: Bool) async {
         guard globallyEnabled else {
-            print("LM: Geofencing disabled globally")
+            logger.info("Geofencing disabled globally")
             stopAllGeofences()
             return
         }
         
         // First ensure we have location permission
         if authorizationStatus != .authorizedAlways {
-            print("LM: Requesting Always location permission for geofencing")
+            logger.info("Requesting Always location permission for geofencing")
             requestLocationAuthorization(aimForAlways: true)
             
             // Wait a bit for the permission dialog
             try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
             
             guard authorizationStatus == .authorizedAlways else {
-                print("LM: Always location permission required for geofencing")
+                logger.info("Always location permission required for geofencing")
                 return
             }
         }
@@ -138,9 +143,7 @@ class LocationManager: NSObject, ObservableObject {
         // Then ensure we have notification permission
         let notificationGranted = await requestNotificationPermissionAsync()
         guard notificationGranted else {
-            print("LM: Notification permission required for geofencing alerts")
-            // You might still want to set up geofences without notifications
-            // or show a warning to the user
+            logger.info("Notification permission required for geofencing alerts")
             return
         }
         
@@ -174,7 +177,7 @@ class LocationManager: NSObject, ObservableObject {
     private func handleAppDidEnterBackground() {
         // App entered background - good time to clean up resources
         // The geofences will continue working in background with Always permission
-        print("LM: App entered background, geofences remain active")
+        logger.info("App entered background, geofences remain active")
     }
     
     private func handleGeofenceNotificationTapped(_ notification: Notification) {
@@ -183,7 +186,7 @@ class LocationManager: NSObject, ObservableObject {
             return
         }
         
-        print("LM: Geofence notification tapped for spot: \(spotId)")
+        logger.info("Geofence notification tapped for spot: \(spotId)")
         
         // You might want to delegate this to your main view controller
         // or post another notification that your UI layer can handle
@@ -233,7 +236,6 @@ class LocationManager: NSObject, ObservableObject {
     
     // MARK: - Permission Management
     func requestLocationAuthorization(aimForAlways: Bool = false) {
-        print("Requesting location authorization. Current status: \(LocationManager.string(for: authorizationStatus)). Aiming for Always: \(aimForAlways)")
 
         switch authorizationStatus {
         case .notDetermined:
@@ -262,7 +264,7 @@ class LocationManager: NSObject, ObservableObject {
     func requestNotificationPermission(completion: @escaping (_ granted: Bool) -> Void) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error = error {
-                print("Notification permission error: \(error.localizedDescription)")
+                self.logger.error("Notification permission error: \(error.localizedDescription)")
             }
             DispatchQueue.main.async {
                 completion(granted)
@@ -319,17 +321,17 @@ class LocationManager: NSObject, ObservableObject {
     // MARK: - Geofencing Management
     private func startGeofence(for spot: Spot) {
         guard CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else {
-            print("LM Error: Geofencing not supported on this device.")
+            logger.error("Geofencing not supported on this device.")
             return
         }
         
         guard let spotId = spot.id else {
-            print("LM Error: Spot ID is nil for '\(spot.name)'. Cannot start geofence.")
+            logger.error("Spot ID is nil for '\(spot.name)'. Cannot start geofence.")
             return
         }
         
         guard spot.notificationRadiusMeters >= 50 && spot.notificationRadiusMeters <= 50000 else {
-            print("LM Error: Invalid radius \(spot.notificationRadiusMeters) for spot '\(spot.name)'. Must be 50-50000m.")
+            logger.error("Invalid radius \(spot.notificationRadiusMeters) for spot '\(spot.name)'. Must be 50-50000m.")
             return
         }
         
@@ -340,7 +342,7 @@ class LocationManager: NSObject, ObservableObject {
         region.notifyOnEntry = true
         region.notifyOnExit = false
         
-        // Update monitoring details atomically
+        // Store the spot's name to use when a notification is triggered for this region.
         var updatedDetails = _monitoredSpotDetails
         updatedDetails[spotId] = spot.name
         monitoredSpotDetails = updatedDetails
@@ -373,7 +375,7 @@ class LocationManager: NSObject, ObservableObject {
             saveMonitoredSpotDetails()
         }
         
-        print("LM: All geofences stopped.")
+        logger.info("All geofences stopped.")
     }
     
     var activeGeofenceIDs: Set<String> {
@@ -384,23 +386,23 @@ class LocationManager: NSObject, ObservableObject {
     func synchronizeGeofences(forSpots spots: [Spot], globallyEnabled: Bool) {
         // Prevent multiple simultaneous synchronizations
         guard !isSynchronizing else {
-            print("LM: Synchronization already in progress, skipping")
+            logger.info("Synchronization already in progress, skipping")
             return
         }
         
         isSynchronizing = true
         defer { isSynchronizing = false }
         
-        print("LM: Synchronizing geofences. Global enabled: \(globallyEnabled), Spots count: \(spots.count)")
+        logger.info("Synchronizing geofences. Global enabled: \(globallyEnabled), Spots count: \(spots.count)")
         
         guard globallyEnabled else {
-            print("LM: Global geofencing disabled, stopping all geofences")
+            logger.info("Global geofencing disabled, stopping all geofences")
             stopAllGeofences()
             return
         }
         
         guard authorizationStatus == .authorizedAlways else {
-            print("LM: 'Always' location permission required for geofencing")
+            logger.info("'Always' location permission required for geofencing")
             if !activeGeofenceIDs.isEmpty {
                 stopAllGeofences()
             }
@@ -433,7 +435,7 @@ class LocationManager: NSObject, ObservableObject {
             stopGeofence(forSpotId: idToRemove)
         }
         
-        print("LM: Geofence sync complete. Active: \(activeGeofenceIDs.count), Desired: \(desiredSpotIDs.count)")
+        logger.info("Geofence sync complete. Active: \(self.activeGeofenceIDs.count), Desired: \(desiredSpotIDs.count)")
     }
     
     private func prioritizeSpots(_ spots: [Spot]) -> [Spot] {
@@ -448,7 +450,7 @@ class LocationManager: NSObject, ObservableObject {
             }
             
             lastGeofencePrioritizationLocation = userLoc
-            print("LM: Prioritized spots by distance from user location")
+            logger.info("Prioritized spots by distance from user location")
         }
         
         return Array(prioritizedSpots.prefix(Self.maxGeofences))
@@ -466,15 +468,15 @@ class LocationManager: NSObject, ObservableObject {
             return
         }
         
-        print("LM: User moved \(distanceMoved)m, checking if geofence reprioritization needed")
-        // This would need to be called with current spots from your data source
-        // Consider adding a callback or delegate pattern here
+        logger.info("User moved \(distanceMoved)m, checking if geofence reprioritization needed")
+        
+        onReprioritizationNeeded?()
     }
     
     // MARK: - Enhanced Geofence Event Handling
     private func handleGeofenceEvent(for region: CLRegion, eventType: String) {
         guard let spotName = _monitoredSpotDetails[region.identifier] else {
-            print("LM Warning: No spot name found for region \(region.identifier)")
+            logger.warning("No spot name found for region \(region.identifier)")
             return
         }
         
@@ -482,7 +484,7 @@ class LocationManager: NSObject, ObservableObject {
         if let lastNotificationTime = recentNotifications[region.identifier] {
             let timeSinceLastNotification = Date().timeIntervalSince(lastNotificationTime)
             if timeSinceLastNotification < Self.notificationCooldownMinutes {
-                print("LM: Skipping notification for '\(spotName)' - within cooldown period")
+                logger.info("Skipping notification for '\(spotName)' - within cooldown period")
                 return
             }
         }
@@ -517,9 +519,9 @@ class LocationManager: NSObject, ObservableObject {
         
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
-                print("LM: Error scheduling geofence notification: \(error.localizedDescription)")
+                self.logger.error("Error scheduling geofence notification: \(error.localizedDescription)")
             } else {
-                print("LM: Successfully scheduled notification for '\(spotName)'")
+                self.logger.info("Successfully scheduled notification for '\(spotName)'")
             }
         }
     }
@@ -550,7 +552,7 @@ extension LocationManager: CLLocationManagerDelegate {
     }
     
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        print("LM: Location manager failed with error: \(error.localizedDescription)")
+        logger.error("Location manager failed with error: \(error.localizedDescription)")
         Task { @MainActor [weak self] in
             self?.isRequestingLocationUpdates = false
         }
@@ -562,13 +564,13 @@ extension LocationManager: CLLocationManagerDelegate {
             guard let self = self else { return }
             let oldStatus = self.authorizationStatus
             self.authorizationStatus = newStatus
-            print("LM: Authorization changed from \(LocationManager.string(for: oldStatus)) to \(LocationManager.string(for: newStatus))")
+            logger.info("Authorization changed from \(LocationManager.string(for: oldStatus)) to \(LocationManager.string(for: newStatus))")
             
             self.updateBackgroundLocationCapability(for: newStatus)
             
             // Handle permission downgrades
             if oldStatus == .authorizedAlways && newStatus != .authorizedAlways {
-                print("LM: Lost 'Always' permission, stopping all geofences")
+                logger.info("Lost 'Always' permission, stopping all geofences")
                 self.stopAllGeofences()
             }
         }
@@ -576,14 +578,14 @@ extension LocationManager: CLLocationManagerDelegate {
     
     nonisolated func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         Task { @MainActor [weak self] in
-            print("LM: Entered region: \(region.identifier)")
+            self?.logger.info("Entered region: \(region.identifier)")
             self?.handleGeofenceEvent(for: region, eventType: "Entered")
         }
     }
     
     nonisolated func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {
         let regionID = region?.identifier ?? "unknown"
-        print("LM: Geofence monitoring failed for region ID \(regionID): \(error.localizedDescription)")
+        logger.error("Geofence monitoring failed for region ID \(regionID): \(error.localizedDescription)")
         
         if let regionIdentifier = region?.identifier {
             Task { @MainActor [weak self] in
@@ -600,8 +602,8 @@ extension LocationManager: CLLocationManagerDelegate {
 
 // MARK: - Helper Extension
 extension LocationManager {
+    /// A helper function to get a readable string for a given authorization status.
     static func string(for status: CLAuthorizationStatus) -> String {
-        // (Helper function for logging)
         switch status {
             case .notDetermined: return "Not Determined"
             case .restricted: return "Restricted"

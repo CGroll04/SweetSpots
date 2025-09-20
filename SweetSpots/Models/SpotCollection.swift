@@ -24,8 +24,7 @@ struct SpotCollection: Identifiable, Codable, Hashable {
     var descriptionText: String?
     
     
-    // It will be nil until set by the Firestore server.
-    /// The server-side timestamp of when the collection was created.
+    /// The server-side timestamp of when the collection was created. Nil until set by Firestore.
     @ServerTimestamp var createdAt: Timestamp?
     var isPublic: Bool = false // Default to private
 
@@ -41,7 +40,6 @@ struct SpotCollection: Identifiable, Codable, Hashable {
         self.userId = userId
         self.name = name
         self.descriptionText = descriptionText
-        // `createdAt` is no longer assigned here.
     }
     
     

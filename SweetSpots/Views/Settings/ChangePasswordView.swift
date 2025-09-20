@@ -6,8 +6,11 @@
 //
 
 import SwiftUI
+import os.log
 
+/// A view that allows an authenticated user to change their password.
 struct ChangePasswordView: View {
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "ChangePasswordView")
     @EnvironmentObject private var authViewModel: AuthViewModel
     @Environment(\.dismiss) private var dismiss
     
@@ -107,9 +110,11 @@ struct ChangePasswordView: View {
         })
     }
     
+    /// Validates inputs and calls the AuthViewModel to update the user's password.
     private func handleChangePassword() {
         guard canSubmit else { return }
         
+        logger.info("User initiated password change.")
         isProcessing = true
         errorMessage = nil
         
@@ -128,29 +133,19 @@ struct ChangePasswordView: View {
                 // Check if the ViewModel has published an error message.
                 if let vmError = authViewModel.errorMessage {
                     // --- Failure Path ---
+                    self.logger.error("Password change failed: \(vmError)")
                     self.errorMessage = vmError
                     let generator = UINotificationFeedbackGenerator()
                     generator.notificationOccurred(.error)
                 } else {
                     // --- Success Path ---
                     // If no error message is set, the operation was successful.
+                    self.logger.info("Password change successful.")
                     let generator = UINotificationFeedbackGenerator()
                     generator.notificationOccurred(.success)
                     self.showingSuccess = true
                 }
             }
         }
-    }
-}
-
-
-#Preview {
-    NavigationStack {
-        // Mock AuthViewModel for previewing
-        let authVM = AuthViewModel()
-        // To preview the error state, you could set:
-        // authVM.errorMessage = "This is a preview error."
-        return ChangePasswordView()
-            .environmentObject(authVM)
     }
 }

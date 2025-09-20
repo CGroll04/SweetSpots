@@ -2,13 +2,13 @@
 //  MainTabView.swift
 //  SweetSpots
 //
-//  Enhanced version with better location and geofence handling
 //
 
 import SwiftUI
 import CoreLocation
 import FirebaseAuth
 import MapKit
+import os.log
 
 // MARK: - Main Tab View
 struct MainTabView: View {
@@ -17,6 +17,8 @@ struct MainTabView: View {
     @StateObject private var locationManager: LocationManager
     @StateObject private var collectionViewModel: CollectionViewModel
     @StateObject private var navigationViewModel: NavigationViewModel
+    
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "MainTabView")
     
     @ObservedObject private var launchManager = LaunchManager.shared
     
@@ -35,17 +37,15 @@ struct MainTabView: View {
     
     enum ActiveSheet: Identifiable {
         case sharedURLAddSpot(url: URL)
-        case sharedPayloadAddSpot(payload: SharedSpotPayload) // <-- ADD THIS
+        case sharedPayloadAddSpot(payload: SharedSpotPayload)
         case spotDetail(spot: Spot)
         case sharedCollection(payload: SharedCollectionPayload)
         
         var id: String {
             switch self {
             case .sharedURLAddSpot(let url): return "sharedURLAddSpot-\(url.absoluteString)"
-            case .sharedPayloadAddSpot(let payload): return "sharedPayloadAddSpot-\(payload.name)" // <-- ADD THIS
-            case .sharedCollection(let payload):
-                // This case should also return a unique string identifier
-                return "sharedCollection-\(payload.collectionName)"
+            case .sharedPayloadAddSpot(let payload): return "sharedPayloadAddSpot-\(payload.name)"
+            case .sharedCollection(let payload): return "sharedCollection-\(payload.collectionName)"
             case .spotDetail(let spot): return "spotDetail-\(spot.hashValue)"
             }
         }
@@ -53,13 +53,9 @@ struct MainTabView: View {
     @State private var activeSheet: ActiveSheet?
     
     // MARK: - Initialization
-    init(authViewModel: AuthViewModel) { // <-- Update signature to accept AuthViewModel
-        // Correct initialization for interdependent StateObjects
+    init(authViewModel: AuthViewModel) {
         let locationManager = LocationManager()
-        
-        // Create the SpotViewModel and pass the AuthViewModel to it
         self._spotsViewModel = StateObject(wrappedValue: SpotViewModel(authViewModel: authViewModel))
-        
         self._locationManager = StateObject(wrappedValue: locationManager)
         self._collectionViewModel = StateObject(wrappedValue: CollectionViewModel())
         self._navigationViewModel = StateObject(wrappedValue: NavigationViewModel(locationManager: locationManager))
@@ -107,6 +103,12 @@ struct MainTabView: View {
         }
         .onChange(of: launchManager.launchAction) { _, _ in }
         // This is the new, correct listener for deep links
+        .onChange(of: navigationCoordinator.incomingSharedURL) { _, newURL in
+            if let url = newURL {
+                activeSheet = .sharedURLAddSpot(url: url)
+                navigationCoordinator.incomingSharedURL = nil
+            }
+        }
         .onChange(of: navigationCoordinator.incomingSharedPayload) { _, newPayload in
             if let payload = newPayload {
                 activeSheet = .sharedPayloadAddSpot(payload: payload)
@@ -122,7 +124,6 @@ struct MainTabView: View {
         .animation(.easeInOut(duration: 0.2), value: selectedTab)
     }
 
-    // Helper 2b: Applies presentation modifiers
     @ViewBuilder
     private func presentationModifiers(for content: some View) -> some View {
         content
@@ -166,14 +167,11 @@ struct MainTabView: View {
     private func sheetView(for sheetType: ActiveSheet) -> some View {
         switch sheetType {
         case .sharedURLAddSpot(let url):
-            // 5. Pass nil for the payload in this old case.
             AddSpotView(isPresented: sheetBinding(), spotToEdit: nil, prefilledPayload: nil, prefilledURL: url)
-            
-        case .sharedPayloadAddSpot(let payload): // <-- ADD THIS CASE
-            // 6. Create the AddSpotView with the payload directly.
+        case .sharedPayloadAddSpot(let payload):
             let contextualURL = URL(string: payload.websiteURL ?? payload.sourceURL ?? "")
             AddSpotView(isPresented: sheetBinding(), spotToEdit: nil, prefilledPayload: payload, prefilledURL: contextualURL)
-        case .sharedCollection(let payload): // <-- ADD THIS
+        case .sharedCollection(let payload):
             ImportCollectionView(isPresented: sheetBinding(), payload: payload)
         case .spotDetail(let spot):
             SpotDetailView(spotId: spot.id ?? "", presentedFrom: .map)
@@ -248,27 +246,38 @@ struct MainTabView: View {
     }
     
     private func handleOnAppear() {
-        print("MainTabView.onAppear triggered.")
+        logger.info("MainTabView.onAppear triggered.")
+        
+        locationManager.onReprioritizationNeeded = {
+            logger.info("Reprioritization needed. Re-syncing geofences with current spots.")
+                // Because this closure is in MainTabView, it has access to everything it needs.
+                locationManager.synchronizeGeofences(
+                    forSpots: spotsViewModel.spots,
+                    globallyEnabled: self.globalGeofencingSystemEnabled
+                )
+            }
+        
+        
         if let userId = authViewModel.userSession?.uid, !initialDataLoadAttemptedForCurrentSession {
-            print("MainTabView.onAppear with existing user session (UID: \(userId)). Performing initial setup.")
+            logger.info("MainTabView.onAppear with existing user session (UID: \(userId)). Performing initial setup.")
             performUserSessionSetup(userId: userId)
             initialDataLoadAttemptedForCurrentSession = true
         }
     }
 
     private func handleUserSessionChange(oldValue: User?, newValue: User?) {
-        print("MainTabView: authViewModel.userSession changed. Old UID: \(oldValue?.uid ?? "nil"), New UID: \(newValue?.uid ?? "nil")")
+        logger.info("authViewModel.userSession changed. Old UID: \(oldValue?.uid ?? "nil"), New UID: \(newValue?.uid ?? "nil")")
         if let userId = newValue?.uid {
             // Fresh login detected
-            if oldValue == nil && newValue != nil && self.launchManager.launchAction == nil { // <<<< ADDED CHECK
-                print("MainTabView: Fresh login detected with NO launch action, resetting to default tab.")
+            if oldValue == nil && newValue != nil && self.launchManager.launchAction == nil {
+                logger.info("Fresh login detected with NO launch action, resetting to default tab.")
                 selectedTab = 0
             }
             performUserSessionSetup(userId: userId)
             initialDataLoadAttemptedForCurrentSession = true
 
         }  else if oldValue != nil && newValue == nil {
-            print("MainTabView: User session became nil (signed out). Clearing data and listeners.")
+            logger.info("User session became nil (signed out). Clearing data and listeners.")
             spotsViewModel.stopListeningAndClearData()
             collectionViewModel.detachCollectionsListener()
             locationManager.stopAllGeofences()
@@ -277,7 +286,7 @@ struct MainTabView: View {
     }
 
     private func performUserSessionSetup(userId: String) {
-        print("MainTabView: Performing setup for user UID: \(userId).")
+        logger.info("Performing setup for user UID: \(userId).")
         spotsViewModel.listenForSpots(userId: userId)
         spotsViewModel.purgeExpiredSpots(for: userId)
         collectionViewModel.listenForCollections(userId: userId)
@@ -287,7 +296,7 @@ struct MainTabView: View {
     }
 
     private func setupLocationServices() {
-        print("MainTabView: Setting up location services")
+        logger.info("Setting up location services")
         if locationManager.authorizationStatus == .notDetermined {
             locationManager.requestLocationAuthorization(aimForAlways: false)
         }
@@ -299,50 +308,52 @@ struct MainTabView: View {
     }
 
     private func attemptInitialGeofenceSync() async {
-        guard globalGeofencingSystemEnabled else { print("MainTabView: Skipping initial geofence sync - globally disabled"); return }
+        guard globalGeofencingSystemEnabled else {
+            logger.info("Skipping initial geofence sync - globally disabled");
+            return }
         let locationOK = locationManager.authorizationStatus == .authorizedAlways
         let notificationsOK = await locationManager.requestNotificationPermissionAsync()
         if locationOK && notificationsOK {
             try? await Task.sleep(for: .milliseconds(500))
-            print("MainTabView: Attempting initial geofence sync. Spots count: \(spotsViewModel.spots.count)")
+            logger.info("Attempting initial geofence sync. Spots count: \(spotsViewModel.spots.count)")
             locationManager.synchronizeGeofences(forSpots: spotsViewModel.spots, globallyEnabled: true)
         } else {
-            print("MainTabView: Permissions not sufficient for initial geofence sync (Location Always: \(locationOK), Notifications: \(notificationsOK))")
+            logger.warning("Permissions not sufficient for initial geofence sync (Location Always: \(locationOK), Notifications: \(notificationsOK))")
         }
     }
 
     private func handleAppWillEnterForeground(_ payload: Notification) {
         guard globalGeofencingSystemEnabled, authViewModel.userSession != nil else { return }
-        print("MainTabView: App entering foreground, checking permissions and syncing geofences")
+        logger.info("App entering foreground, checking permissions and syncing geofences")
         setupLocationServices()
         Task {
             let notificationsOK = await locationManager.requestNotificationPermissionAsync()
             if notificationsOK && (locationManager.authorizationStatus == .authorizedAlways) {
                 locationManager.synchronizeGeofences(forSpots: spotsViewModel.spots, globallyEnabled: true)
-                print("MainTabView: Foreground geofence sync completed")
+                logger.info("Foreground geofence sync completed")
             }
         }
     }
 
     private func handleSpotsChange(oldValue: [Spot], newValue: [Spot]) {
         guard authViewModel.userSession != nil else { return }
-        print("MainTabView: spotsViewModel.spots changed, count: \(newValue.count)")
+        logger.info("spotsViewModel.spots changed, count: \(newValue.count)")
         locationManager.synchronizeGeofences(forSpots: newValue, globallyEnabled: self.globalGeofencingSystemEnabled)
     }
 
     private func handleGlobalGeofencingToggle(oldValue: Bool, newValue: Bool) {
         guard authViewModel.userSession != nil else { return }
-        print("MainTabView: Global geofencing toggled to: \(newValue)")
+        logger.info("Global geofencing toggled to: \(newValue)")
         locationManager.synchronizeGeofences(forSpots: spotsViewModel.spots, globallyEnabled: newValue)
     }
 
     private func handleLocationAuthorizationChange(oldValue: CLAuthorizationStatus, newValue: CLAuthorizationStatus) {
-        print("MainTabView: Location authorization changed from \(LocationManager.string(for: oldValue)) to \(LocationManager.string(for: newValue))")
+        logger.info("Location authorization changed from \(LocationManager.string(for: oldValue)) to \(LocationManager.string(for: newValue))")
         
         // If the user just granted "When In Use" for the first time,
         // immediately ask them to upgrade to "Always".
         if oldValue == .notDetermined && newValue == .authorizedWhenInUse {
-            print("MainTabView: User granted 'When In Use'. Immediately requesting 'Always' upgrade.")
+            logger.info("User granted 'When In Use'. Immediately requesting 'Always' upgrade.")
             // Give the system a fraction of a second to settle before showing the next popup.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.locationManager.requestLocationAuthorization(aimForAlways: true)

@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import os.log
 
 typealias DeletionMode = CollectionViewModel.DeletionMode
 
@@ -16,14 +17,15 @@ fileprivate struct EditCollectionAlertInfo: Identifiable {
     let message: String
 }
 
+/// A view for editing the name and description of an existing collection.
 struct EditCollectionView: View {
+    
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "EditCollectionView")
+    
     @EnvironmentObject var collectionViewModel: CollectionViewModel
     @EnvironmentObject var spotViewModel: SpotViewModel // Ensure SpotViewModel is in the environment
     @Environment(\.dismiss) var dismiss
     
-    // The collection being edited. Passed in and used to initialize @State.
-    // This 'collection' itself won't be directly bound to UI editing fields.
-    // Instead, editableName and editableDescription will be bound.
     let collection: SpotCollection
     
     @State private var editableName: String
@@ -31,7 +33,7 @@ struct EditCollectionView: View {
     @State private var showDeleteConfirmation: Bool = false
     @State private var isProcessing: Bool = false
     @State private var alertInfo: EditCollectionAlertInfo? = nil
-    @State private var isPublic: Bool // <-- Add this state variable
+    @State private var isPublic: Bool
 
 
     init(collection: SpotCollection) {
@@ -39,7 +41,7 @@ struct EditCollectionView: View {
         // Initialize @State properties for editing based on the passed-in collection
         _editableName = State(initialValue: collection.name)
         _editableDescription = State(initialValue: collection.descriptionText ?? "")
-        _isPublic = State(initialValue: collection.isPublic) // <-- Initialize it
+        _isPublic = State(initialValue: collection.isPublic)
     }
 
     var body: some View {
@@ -56,7 +58,7 @@ struct EditCollectionView: View {
                             .foregroundColor(.gray)
                         TextEditor(text: $editableDescription)
                             .frame(height: 100) // Give it some default height
-                            .border(Color.gray.opacity(0.2), width: 1) // Optional: visual cue
+                            .border(Color.gray.opacity(0.2), width: 1)
                             .disabled(isProcessing)
                     }
                 }
@@ -85,13 +87,13 @@ struct EditCollectionView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
-            .navigationTitle("Edit Collection") // Static title, or "Edit \(collection.name)"
+            .navigationTitle("Edit Collection")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") { dismiss() }
                         .disabled(isProcessing)
-                        .tint(Color.accentColor) // Or your theme accent
+                        .tint(Color.accentColor)
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     if isProcessing { ProgressView().tint(Color.accentColor) }
@@ -127,19 +129,21 @@ struct EditCollectionView: View {
     }
     
     private func deleteCollection(mode: DeletionMode) {
-        isProcessing = true
-        collectionViewModel.deleteCollection(
-            self.collection,
-            mode: mode,
-            allSpots: spotViewModel.spots // <-- PASS IN THE SPOTS ARRAY
-        ) { result in
-            isProcessing = false
-            switch result {
-            case .success:
+        logger.info("User initiated deletion of collection '\(self.collection.name)' with mode: \(String(describing: mode)).")
+        Task {
+            isProcessing = true
+            do {
+                try await collectionViewModel.deleteCollection(
+                    self.collection,
+                    mode: mode,
+                    allSpots: spotViewModel.spots
+                )
                 dismiss()
-            case .failure(let error):
+            } catch {
+                logger.error("Failed to delete collection '\(self.collection.name)': \(error.localizedDescription)")
                 alertInfo = EditCollectionAlertInfo(title: "Delete Failed", message: error.localizedDescription)
             }
+            isProcessing = false
         }
     }
 
@@ -157,8 +161,10 @@ struct EditCollectionView: View {
     }
 
     private func saveChanges() {
+        logger.info("User initiated save for collection '\(collection.name)'.")
         let trimmedName = editableName.trimmedSafe()
         guard !trimmedName.isEmpty else {
+            logger.debug("Save validation failed: collection name was empty.")
             alertInfo = EditCollectionAlertInfo(title: "Name Required", message: "Collection name cannot be empty.")
             return
         }
@@ -170,6 +176,7 @@ struct EditCollectionView: View {
                 existingColl.name.localizedCaseInsensitiveCompare(trimmedName) == .orderedSame
             }
             if alreadyExists != nil {
+                logger.debug("Save validation failed: duplicate collection name '\(trimmedName)'.")
                 alertInfo = EditCollectionAlertInfo(title: "Name Exists", message: "Another collection with this name already exists.")
                 return
             }
@@ -179,14 +186,16 @@ struct EditCollectionView: View {
         var updatedCollection = self.collection // Start with the original to preserve ID, userId, createdAt
         updatedCollection.name = trimmedName
         updatedCollection.descriptionText = editableDescription.trimmedSafe().isEmpty ? nil : editableDescription.trimmedSafe()
-        updatedCollection.isPublic = self.isPublic // <-- Add this line to save the toggle's state
+        updatedCollection.isPublic = self.isPublic
         
         collectionViewModel.updateCollection(updatedCollection) { result in
             isProcessing = false
             switch result {
             case .success:
+                logger.info("Successfully updated collection '\(updatedCollection.name)'.")
                 dismiss()
             case .failure(let error):
+                logger.error("Failed to update collection '\(updatedCollection.name)': \(error.localizedDescription)")
                 alertInfo = EditCollectionAlertInfo(title: "Update Failed", message: error.localizedDescription)
             }
         }

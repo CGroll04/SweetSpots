@@ -7,6 +7,9 @@
 
 import SwiftUI
 
+/// A view that presents a list of all collections, allowing the user to select multiple collections.
+///
+/// The selection state is managed via the `selectedCollectionIds` binding.
 struct MultiCollectionSelectorView: View {
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
     @Binding var selectedCollectionIds: Set<String>
@@ -39,6 +42,7 @@ struct MultiCollectionSelectorView: View {
         }
     }
     
+    /// Adds or removes a collection ID from the selection set.
     private func toggleSelection(for collectionId: String?) {
         guard let collectionId = collectionId else { return }
         

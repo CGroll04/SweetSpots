@@ -2,12 +2,14 @@
 //  SweetSpotsApp.swift
 //  SweetSpots
 //
-//  Enhanced version with better notification coordination
 //
 
 import SwiftUI
 import FirebaseCore
 import UserNotifications
+import os.log
+
+fileprivate let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "AppLifecycle")
 
 @main
 struct SweetSpotsApp: App {
@@ -21,7 +23,6 @@ struct SweetSpotsApp: App {
             ContentView()
                 .environmentObject(authViewModel)
                 .environmentObject(navigationCoordinator)
-            
                 .onOpenURL { incomingURL in
                     DeepLinkRouter.handle(url: incomingURL, navigation: navigationCoordinator)
                 }
@@ -29,8 +30,24 @@ struct SweetSpotsApp: App {
                     guard let url = activity.webpageURL else {
                         return
                     }
+                    logger.info("Continuing user activity with URL: \(url.absoluteString)")
                     DeepLinkRouter.handle(url: url, navigation: navigationCoordinator)
                 }
+        }
+    }
+    
+    private func handleIncomingURL(_ url: URL) {
+        guard url.scheme == "sweetspotsapp", url.host == "addSpot" else {
+            return
+        }
+        
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        
+        if let sourceURLString = components?.queryItems?.first(where: { $0.name == "sourceURL" })?.value,
+           let decodedURLString = sourceURLString.removingPercentEncoding {
+            
+            UserDefaults.standard.set(decodedURLString, forKey: AppConstants.pendingSharedURLKey)
+            NotificationCenter.default.post(name: .handlePendingSharedURL, object: nil)
         }
     }
 }
@@ -48,6 +65,9 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
         setupNotificationCenter()
         setupRemoteNotifications(for: application)
         
+        if let url = launchOptions?[.url] as? URL {
+            handleDeepLinkAtLaunch(url)
+        }
         return true
     }
     
@@ -161,12 +181,28 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
             return
         }
         
+        if let spotId = userInfo["spotId"] as? String {
+            NotificationCenter.default.post(
+                name: .spotNotificationTapped,
+                object: nil,
+                userInfo: ["spotId": spotId]
+            )
+            return
+        }
+        
         // Handle test notifications or other types
         if let aps = userInfo["aps"] as? [String: AnyObject],
            let alert = aps["alert"] as? [String: AnyObject],
-           let title = alert["title"] as? String,
-           title == "Test Notification" {
-            NotificationCenter.default.post(name: .testNotificationTapped, object: nil, userInfo: userInfo)
+           let title = alert["title"] as? String {
+            
+            if title == "Test Notification" {
+                // Handle test notification
+                NotificationCenter.default.post(
+                    name: .testNotificationTapped,
+                    object: nil,
+                    userInfo: userInfo
+                )
+            }
         }
     }
 
@@ -218,20 +254,4 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
             }
         }
     }
-}
-
-// MARK: - Notification Name Extensions
-extension Notification.Name {
-    static let applicationDidBecomeActive = Notification.Name("applicationDidBecomeActive")
-    static let applicationWillResignActive = Notification.Name("applicationWillResignActive")
-    static let applicationDidEnterBackground = Notification.Name("applicationDidEnterBackground")
-    static let applicationWillEnterForeground = Notification.Name("applicationWillEnterForeground")
-    
-    static let geofenceTriggeredInForeground = Notification.Name("geofenceTriggeredInForeground")
-    static let geofenceNotificationTapped = Notification.Name("geofenceNotificationTapped")
-    static let testNotificationTapped = Notification.Name("testNotificationTapped")
-    
-    static let deviceTokenReceived = Notification.Name("deviceTokenReceived")
-    static let deviceTokenRegistrationFailed = Notification.Name("deviceTokenRegistrationFailed")
-    
 }

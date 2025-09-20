@@ -7,7 +7,7 @@
 
 import Foundation
 
-// A generic, identifiable struct to hold content for the share sheet.
+/// A generic, identifiable struct to hold content for the share sheet.
 struct ShareableContent: Identifiable {
     let id = UUID()
     let text: String

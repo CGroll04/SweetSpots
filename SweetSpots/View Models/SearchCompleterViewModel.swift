@@ -8,13 +8,18 @@
 import SwiftUI
 import MapKit
 import Combine
+import os.log
 
 @MainActor
+/// A view model that uses `MKLocalSearchCompleter` to provide real-time search suggestions for locations.
 class SearchCompleterViewModel: NSObject, ObservableObject {
+    
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "SearchCompleterViewModel")
+    
     enum SearchState: Equatable {
         case idle
         case searching
-        case loadingDetails // <-- Add this new state
+        case loadingDetails
         case results([MKLocalSearchCompletion])
         case noResults
         case selected
@@ -82,6 +87,7 @@ class SearchCompleterViewModel: NSObject, ObservableObject {
         completer.cancel()
     }
     
+    /// Fetches detailed information (address, coordinates, etc.) for a selected search completion.
     func getPlaceDetails(for completion: MKLocalSearchCompletion) async throws -> PlaceDetails {
         let searchRequest = MKLocalSearch.Request(completion: completion)
         let search = MKLocalSearch(request: searchRequest)
@@ -91,6 +97,8 @@ class SearchCompleterViewModel: NSObject, ObservableObject {
         guard let mapItem = response.mapItems.first else {
             throw PlaceDetailsError.noDetailsFound
         }
+        
+        logger.info("Successfully fetched details for place: '\(mapItem.name ?? "Unknown")'")
         
         return PlaceDetails(
             name: mapItem.name ?? completion.title,
@@ -137,6 +145,9 @@ class SearchCompleterViewModel: NSObject, ObservableObject {
 extension SearchCompleterViewModel: MKLocalSearchCompleterDelegate {
     nonisolated func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
         Task { @MainActor in
+            
+            self.logger.info("Search completer updated with \(completer.results.count) results for query: '\(completer.queryFragment)'")
+            
             // Always check if we're still searching for the same query
             guard completer.queryFragment == lastSearchQuery,
                   !completer.queryFragment.isEmpty else { return }
@@ -151,6 +162,9 @@ extension SearchCompleterViewModel: MKLocalSearchCompleterDelegate {
     
     nonisolated func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
         Task { @MainActor in
+            
+            self.logger.error("Search completer failed for query '\(completer.queryFragment)': \(error.localizedDescription)")
+            
             // Only update if this is still the current search
             guard completer.queryFragment == lastSearchQuery,
                   !completer.queryFragment.isEmpty else { return }
@@ -168,36 +182,5 @@ extension SearchCompleterViewModel: MKLocalSearchCompleterDelegate {
                 searchState = .error("An error occurred during search")
             }
         }
-    }
-}
-
-// MARK: - Supporting Types
-struct PlaceDetails {
-    let name: String
-    let fullAddress: String
-    let coordinates: CLLocationCoordinate2D
-    let phoneNumber: String?
-    let websiteURL: URL?
-}
-
-enum PlaceDetailsError: LocalizedError {
-    case noDetailsFound
-    
-    var errorDescription: String? {
-        switch self {
-        case .noDetailsFound:
-            return "Could not find details for this location"
-        }
-    }
-}
-
-// MARK: - Extensions
-extension MKLocalSearchCompletion: @retroactive Identifiable {
-    public var id: String {
-        "\(title)-\(subtitle)"
-    }
-    
-    var fullDescription: String {
-        subtitle.isEmpty ? title : "\(title), \(subtitle)"
     }
 }

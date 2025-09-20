@@ -85,7 +85,7 @@ class ShareViewController: UIViewController {
     private func openMainApp(withSourceURL sourceURL: URL) {
         // Your app's custom URL scheme
         let appScheme = "sweetspotsapp"
-        let actionPath = "addSpot" // The action you want your app to perform
+        let actionPath = "addSpotFromShare"
 
         guard var components = URLComponents(string: "\(appScheme)://\(actionPath)") else {
             print("Share Extension: Could not create base app URL components.")

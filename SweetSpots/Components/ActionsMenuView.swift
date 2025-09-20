@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+/// A reusable menu component that displays common actions for a Spot, such as editing, deleting, and sharing.
 struct ActionsMenuView: View {
     let spot: Spot
     let onEdit: () -> Void

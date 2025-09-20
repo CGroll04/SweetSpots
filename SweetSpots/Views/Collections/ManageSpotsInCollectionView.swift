@@ -6,57 +6,13 @@
 //
 
 import SwiftUI
+import os.log
 
-// A new, dedicated view for a selectable spot row.
-private struct SelectableSpotRow: View {
-    let spot: Spot
-    let isSelected: Bool
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: spot.category.systemImageName)
-                .font(.system(size: 18))
-                .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
-                .background(colorFromString(spot.category.associatedColor))
-                .clipShape(Circle())
-
-            VStack(alignment: .leading) {
-                Text(spot.name)
-                    .fontWeight(.semibold)
-                Text(spot.address)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            
-            Spacer()
-            
-            if isSelected {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(Color.themeAccent)
-            }
-        }
-        .padding(.vertical, 6)
-    }
-    
-    // This helper can be moved from SpotCardView or duplicated here
-    private func colorFromString(_ colorName: String) -> Color {
-        switch colorName {
-        case "orange": return .orange
-        case "green": return .green
-        case "purple": return .purple
-        case "blue": return .blue
-        case "red": return .red
-        case "teal": return .teal
-        case "brown": return .brown
-        default: return .gray
-        }
-    }
-}
-
+/// A view for editing which spots are included in an existing collection.
 struct ManageSpotsInCollectionView: View {
+    
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "ManageSpotsInCollectionView")
+    
     // Environment
     @EnvironmentObject private var spotsViewModel: SpotViewModel
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
@@ -130,25 +86,28 @@ struct ManageSpotsInCollectionView: View {
     }
 
     private func save() {
-        guard let collId = collection.id else { return }
-        isProcessing = true
-
-        let current = initiallyInCollection
-        let toAdd = selectedSpotIDs.subtracting(current)
-        let toRemove = current.subtracting(selectedSpotIDs)
-
-        // CORRECTED: Call the new, specific function names
-        if !toAdd.isEmpty {
-            spotsViewModel.addSpotsToCollection(spotIDs: toAdd, toCollection: collId)
+        guard let collId = collection.id else {
+            logger.fault("Cannot save collection changes: collection ID is missing.")
+            return
         }
-        if !toRemove.isEmpty {
-            spotsViewModel.removeSpotsFromCollection(spotIDs: toRemove, fromCollection: collId)
-        }
-
-        // Give Firestore a moment to process before dismissing
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.isProcessing = false
-            self.dismiss()
+        
+        Task{
+            isProcessing = true
+            
+            let current = initiallyInCollection
+            let toAdd = selectedSpotIDs.subtracting(current)
+            let toRemove = current.subtracting(selectedSpotIDs)
+            logger.info("Saving changes for collection '\(self.collection.name)': adding \(toAdd.count) spots, removing \(toRemove.count) spots.")
+            
+            if !toAdd.isEmpty {
+                spotsViewModel.addSpotsToCollection(spotIDs: toAdd, toCollection: collId)
+            }
+            if !toRemove.isEmpty {
+                spotsViewModel.removeSpotsFromCollection(spotIDs: toRemove, fromCollection: collId)
+            }
+            
+            isProcessing = false
+            dismiss()
         }
     }
 }

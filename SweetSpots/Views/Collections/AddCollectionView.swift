@@ -6,57 +6,13 @@
 //
 
 import SwiftUI
+import os.log
 
-// A new, dedicated view for a selectable spot row.
-private struct SelectableSpotRow: View {
-    let spot: Spot
-    let isSelected: Bool
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: spot.category.systemImageName)
-                .font(.system(size: 18))
-                .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
-                .background(colorFromString(spot.category.associatedColor))
-                .clipShape(Circle())
-
-            VStack(alignment: .leading) {
-                Text(spot.name)
-                    .fontWeight(.semibold)
-                Text(spot.address)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            
-            Spacer()
-            
-            if isSelected {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(Color.themeAccent)
-            }
-        }
-        .padding(.vertical, 6)
-    }
-    
-    // This helper can be moved from SpotCardView or duplicated here
-    public func colorFromString(_ colorName: String) -> Color {
-        switch colorName {
-        case "orange": return .orange
-        case "green": return .green
-        case "purple": return .purple
-        case "blue": return .blue
-        case "red": return .red
-        case "teal": return .teal
-        case "brown": return .brown
-        default: return .gray
-        }
-    }
-}
-
+/// A view presented modally for creating a new collection and selecting spots to include in it.
 struct AddCollectionView: View {
+    
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "AddCollectionView")
+    
     // Environment Objects
     @EnvironmentObject private var spotsViewModel: SpotViewModel
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
@@ -135,11 +91,13 @@ struct AddCollectionView: View {
     }
     
     private func handleCreateCollection() {
-        // It's more robust to get the userId from the authViewModel
-        guard let userId = authViewModel.userSession?.uid else { return }
-        isProcessing = true
+        guard let userId = authViewModel.userSession?.uid else {
+            logger.fault("User ID is missing. Cannot create collection.")
+            return
+        }
 
         Task {
+            isProcessing = true
             do {
                 let newCollectionId = try await collectionViewModel.addCollection(
                     name: collectionName,
@@ -147,14 +105,17 @@ struct AddCollectionView: View {
                 )
 
                 if !selectedSpotIDs.isEmpty {
-                    // Use the new, correct function name
                     spotsViewModel.addSpotsToCollection(spotIDs: selectedSpotIDs, toCollection: newCollectionId)
                 }
-
+                
+                logger.info("Successfully created collection '\(self.collectionName)' with \(self.selectedSpotIDs.count) spots.")
+                
+                isProcessing = false
                 dismiss()
+                
             } catch {
                 isProcessing = false
-                print("Failed to create collection: \(error.localizedDescription)")
+                logger.error("Failed to create collection: \(error.localizedDescription)")
             }
         }
     }

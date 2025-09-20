@@ -9,6 +9,11 @@ import Foundation
 import SwiftUI
 import CoreLocation
 import UserNotifications
+import os.log
+
+
+fileprivate let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "Utilities")
+
 
 // MARK: - String Extensions
 extension String {
@@ -189,7 +194,8 @@ extension Color {
         case 8: // ARGB (32-bit)
             (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
         default:
-            (a, r, g, b) = (1, 1, 1, 0)
+            logger.warning("Invalid hex string provided: '\(hex)'. Defaulting to clear color.")
+            (a, r, g, b) = (0, 0, 0, 0) // Changed to black with 0 alpha
         }
 
         self.init(
@@ -216,6 +222,7 @@ extension Color {
 }
 
 // MARK: - NumberFormatter Utilities
+/// A container for shared, pre-configured NumberFormatter instances.
 struct NumberFormatters {
     /// Standard formatter for distances (no decimals, 50-50000 range)
     static let distance: NumberFormatter = {
@@ -310,9 +317,13 @@ struct UIUtils {
     
     /// Opens a URL in the system browser
     static func openURL(_ urlString: String) {
-        guard let url = URL(string: urlString) else { return }
+        guard let url = URL(string: urlString) else {
+            logger.warning("Attempted to open an invalid URL string: '\(urlString)'")
+            return
+        }
         UIApplication.shared.open(url)
     }
+
     
     /// Opens the app's settings page
     static func openAppSettings() {
@@ -328,7 +339,7 @@ extension UNUserNotificationCenter {
         do {
             return try await requestAuthorization(options: [.alert, .sound, .badge])
         } catch {
-            print("Failed to request notification permission: \(error)")
+            logger.error("Failed to request notification permission: \(error.localizedDescription)")
             return false
         }
     }
@@ -372,14 +383,13 @@ extension DateFormatter {
 struct AppConstants {
     
     static let universalLinkHost = "sweetspotsshare.netlify.app"
-    static let universalLinkPrefix = "/s"          // or whatever you chose
+    static let universalLinkPrefix = "/s"
     static let downloadPath = "/download"
-    // App Store/TestFlight links (fill in later)
+    //TODO: App Store/TestFlight links
     static let appStoreURL = "https://apps.apple.com/app/idXXXXXXXXX"
     static let testFlightURL = "https://testflight.apple.com/join/XXXXXXXX"
     
     // Notification keys
-    static let spotNotificationTappedKey = "spotNotificationTapped"
     static let pendingSharedURLKey = "pendingSharedURL"
     
     // UserDefaults keys
@@ -439,5 +449,20 @@ extension Data {
         let pad = 4 - (s.count % 4)
         if pad < 4 { s.append(String(repeating: "=", count: pad)) }
         self.init(base64Encoded: s)
+    }
+}
+
+extension Color {
+    static func from(name: String) -> Color {
+        switch name {
+        case "orange": return .orange
+        case "green": return .green
+        case "purple": return .purple
+        case "blue": return .blue
+        case "red": return .red
+        case "teal": return .teal
+        case "brown": return .brown
+        default: return .gray
+        }
     }
 }

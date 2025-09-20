@@ -4,6 +4,7 @@
 //
 //  Created by Charlie Groll on 2025-05-04.
 //
+
 import SwiftUI
 import FirebaseFirestore
 import CoreLocation
@@ -11,19 +12,19 @@ import CoreLocation
 /// Represents a single saved location.
 struct Spot: Identifiable, Codable, Equatable, Hashable {
     @DocumentID var id: String?
-    var userId: String                 // ID of the user who owns this spot
+    var userId: String
     var name: String
     var address: String
     var latitude: CLLocationDegrees
     var longitude: CLLocationDegrees
-    var sourceURL: String?              // Optional URL for the original post/source
+    var sourceURL: String?
     var category: SpotCategory
     var notes: String?
     
     @ServerTimestamp var createdAt: Timestamp?
 
 
-    // Additional details from MKMapItem (if populated)
+    // Optional details typically populated from an Apple Maps search result
     var phoneNumber: String?
     var websiteURL: String?
     
@@ -36,7 +37,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
             _notificationRadiusMeters = max(50.0, min(50000.0, newValue))
         }
     }
-    var collectionIds: [String] = [] // Replaces `collectionId: String?`
+    var collectionIds: [String] = []
 //    var visitCount: Int = 0
     var deletedAt: Timestamp? = nil
 
@@ -57,7 +58,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
             lhs.notes == rhs.notes &&
             lhs.phoneNumber == rhs.phoneNumber &&
             lhs.websiteURL == rhs.websiteURL &&
-            lhs.collectionIds == rhs.collectionIds && // <-- UPDATED THIS LINE
+            lhs.collectionIds == rhs.collectionIds &&
             lhs.wantsNearbyNotification == rhs.wantsNearbyNotification &&
             lhs.notificationRadiusMeters.isApproximately(rhs.notificationRadiusMeters)
     }
@@ -81,7 +82,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
             case wantsNearbyNotification
             // Map the private property to the desired key in Firestore
             case _notificationRadiusMeters = "notificationRadiusMeters"
-            case collectionIds // <-- UPDATED THIS LINE
+            case collectionIds
             case notes
 //            case visitCount
             case deletedAt
@@ -98,7 +99,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         category: SpotCategory = .other,
         phoneNumber: String? = nil,
         websiteURL: String? = nil,
-        collectionIds: [String] = [], // <-- UPDATED THIS LINE
+        collectionIds: [String] = [],
         wantsNearbyNotification: Bool = false,
         notificationRadiusMeters: Double = 200.0,
         notes: String? = nil,
@@ -115,7 +116,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         self.category = category
         self.phoneNumber = phoneNumber
         self.websiteURL = websiteURL
-        self.collectionIds = collectionIds // <-- UPDATED THIS LINE
+        self.collectionIds = collectionIds
         self.wantsNearbyNotification = wantsNearbyNotification
         self.notes = notes
         self.deletedAt = deletedAt
@@ -134,11 +135,11 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         self.category = payload.resolvedCategory()
         self.phoneNumber = payload.phoneNumber
         self.websiteURL = payload.websiteURL
-        self.collectionIds = collectionIds // <-- UPDATED THIS LINE
+        self.collectionIds = collectionIds
         self.notes = payload.notes
     }
     
-    // Add this new mutating function inside Spot.swift
+    /// Updates the spot's properties from a shared payload and adds a new collection ID.
     mutating func update(from payload: SharedSpotPayload, newCollectionId: String) {
         self.name = payload.name
         self.address = payload.address
@@ -247,7 +248,7 @@ enum SpotCategory: String, CaseIterable, Identifiable, Codable {
         case .sights: return "blue"
         case .activities: return "red"
         case .hospitality: return "teal"
-        case .other: return "indigo"
+        case .other: return "brown"
         }
     }
 }

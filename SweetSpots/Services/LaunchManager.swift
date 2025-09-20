@@ -12,14 +12,15 @@ import SwiftUI // Needed for ObservableObject
 final class LaunchManager: ObservableObject {
     static let shared = LaunchManager()
 
+    /// Represents an action to be performed immediately after the app launches.
     enum LaunchAction: Equatable {
         case navigateToSpotID(String)
-        // add more actions in future if needed
     }
 
-    @Published var launchAction: LaunchAction?
+    @Published var launchAction: MainTabView.LaunchAction?
 
     private init() {}
-
+    
+    /// Resets the pending launch action, ensuring it doesn't fire again.
     func reset() { launchAction = nil }
 }

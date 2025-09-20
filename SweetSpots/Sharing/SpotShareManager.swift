@@ -7,10 +7,16 @@
 
 import Foundation
 import FirebaseFirestore
+import os.log
 
+/// A manager responsible for creating temporary and permanent sharing URLs for spots and collections.
 enum SpotShareManager {
-    // Change to your real Universal Link domain
-    static let universalBase = URL(string: "https://\(AppConstants.universalLinkHost)\(AppConstants.universalLinkPrefix)/spot")!
+
+    private static let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "SpotShareManager")
+    
+    /// Creates a temporary, 30-day share link for a single spot.
+    ///
+    /// This saves a payload to the `/shares` collection in Firestore and returns a URL containing the new document ID.
     static func makeShareURL(from spot: Spot, collectionName: String?, senderName: String?, userId: String) async throws -> URL {
         let expirationDate = Date().addingTimeInterval(30 * 24 * 60 * 60) // 30 days in seconds
 
@@ -36,6 +42,8 @@ enum SpotShareManager {
         let ref = try await db.collection("shares").addDocument(from: payload)
         let shareId = ref.documentID
         
+        logger.info("Saved temporary spot share payload with ID: \(shareId)")
+        
         // 2. Build the new, short URL with the document ID
         let urlString = "https://sweetspotsshare.netlify.app/s/spot/\(shareId)"
         guard let url = URL(string: urlString) else {
@@ -51,8 +59,7 @@ enum SpotShareManager {
             senderName: String?,
             userId: String
         ) async throws -> URL {
-            // This is the logic from my previous answer. It creates a temporary
-            // document in the `/shares` collection with a 30-day expiry.
+            /// Creates a temporary, 30-day share link for a private collection and its spots.
             let expirationDate = Date().addingTimeInterval(30 * 24 * 60 * 60)
             let payload = SharedCollectionPayload(
                 collectionName: collection.name,
@@ -81,12 +88,14 @@ enum SpotShareManager {
             let ref = try await db.collection("shares").addDocument(from: payload)
             let shareId = ref.documentID
             
+            logger.info("Saved temporary collection share payload with ID: \(shareId)")
+            
             let urlString = "https://sweetspotsshare.netlify.app/s/collection/\(shareId)"
             guard let url = URL(string: urlString) else { throw URLError(.badURL) }
             return url
         }
     
-    /// PATH 2: Creates a permanent, public link to the original collection.
+    /// Creates a permanent, public link for a collection and marks it as public in Firestore.
     static func makePublicCollectionShareURL(for collection: SpotCollection) async throws -> URL {
         guard let collectionId = collection.id, !collection.userId.isEmpty else {
             throw URLError(.badURL)
@@ -106,32 +115,8 @@ enum SpotShareManager {
             throw URLError(.badURL)
         }
         
+        logger.info("Successfully created permanent public link for collection: \(collectionId)")
+        
         return url
-    }
-
-    static func encode<T: Codable>(_ value: T) -> String? {
-        do {
-            let data = try JSONEncoder().encode(value)
-            return base64URLEncode(data)
-        } catch { return nil }
-    }
-
-    static func decode<T: Codable>(_ type: T.Type, from base64url: String) -> T? {
-        guard let data = base64URLDecode(base64url) else { return nil }
-        return try? JSONDecoder().decode(type, from: data)
-    }
-
-    private static func base64URLEncode(_ data: Data) -> String {
-        data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-    private static func base64URLDecode(_ str: String) -> Data? {
-        var s = str.replacingOccurrences(of: "-", with: "+")
-                   .replacingOccurrences(of: "_", with: "/")
-        let pad = 4 - (s.count % 4)
-        if pad < 4 { s.append(String(repeating: "=", count: pad)) }
-        return Data(base64Encoded: s)
     }
 }

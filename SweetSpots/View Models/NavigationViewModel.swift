@@ -9,10 +9,14 @@ import SwiftUI
 import Foundation
 import MapKit
 import Combine
+import os.log
 
 @MainActor
+/// Manages the state and logic for in-app, turn-by-turn navigation to a selected spot.
 class NavigationViewModel: ObservableObject {
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "NavigationViewModel")
     
+    /// A container for a calculated route and its destination spot.
     struct RouteInfo {
         let spot: Spot
         let route: MKRoute
@@ -24,6 +28,7 @@ class NavigationViewModel: ObservableObject {
         }
     }
 
+    /// Represents the current state of the navigation UI, such as selecting a route or being idle.
     enum NavigationState: Equatable {
         static func == (lhs: NavigationViewModel.NavigationState, rhs: NavigationViewModel.NavigationState) -> Bool {
             switch (lhs, rhs) {
@@ -78,7 +83,7 @@ class NavigationViewModel: ObservableObject {
     // Formatters
     private let distanceFormatter = MKDistanceFormatter()
     private let dateFormatter = DateFormatter()
-    private let timeFormatter: DateComponentsFormatter = { // <-- ADD THIS
+    private let timeFormatter: DateComponentsFormatter = {
         let formatter = DateComponentsFormatter()
         formatter.unitsStyle = .abbreviated // "10 min", "1 hr"
         formatter.allowedUnits = [.hour, .minute]
@@ -109,29 +114,35 @@ class NavigationViewModel: ObservableObject {
 
         let directions = MKDirections(request: request)
         do {
-            if let routeResponse = try? await directions.calculate() {
-                if let route = routeResponse.routes.first {
-                    let info = RouteInfo(spot: spot, route: route)
-                    self.navigationState = .selectingRoute(info: info)
-                } else {
-                    // Handle the case where a response was received but had no routes
-                    print("Error: No routes found.")
-                    self.navigationState = .idle
-                }
-            } else {
-                // Handle the case where calculate() returned nil
-                print("Error: Route calculation returned nil.")
+            // 1. Get the response. This returns a non-optional value or throws an error.
+            let routeResponse = try await directions.calculate()
+            
+            // 2. Now that you have the response, safely unwrap the first route from its array.
+            guard let route = routeResponse.routes.first else {
+                logger.warning("No routes found for the requested destination.")
+                self.routeCalculationError = "No routes could be found for this destination."
                 self.navigationState = .idle
+                return
             }
+            
+            // If successful, update the state with the route info.
+            let info = RouteInfo(spot: spot, route: route)
+            self.navigationState = .selectingRoute(info: info)
+            
+        } catch {
+            // This block catches any error thrown by directions.calculate().
+            logger.error("Failed to calculate route: \(error.localizedDescription)")
+            self.routeCalculationError = "Could not calculate a route. Please check your connection and try again."
+            self.navigationState = .idle
         }
     }
 
-    // 3. CREATE A FUNCTION TO START THE ACTUAL NAVIGATION
+    /// Transitions from the route selection state to active, turn-by-turn navigation.
     func beginActualNavigation() {
         // 1. Make sure we have a route selected
         guard case .selectingRoute(let info) = navigationState else { return }
 
-        print("NavigationViewModel: Starting in-app navigation.")
+        logger.info("Starting in-app navigation to spot: \(info.spot.name)")
 
         // 2. Set up all the state properties for turn-by-turn mode
         self.route = info.route
@@ -153,7 +164,7 @@ class NavigationViewModel: ObservableObject {
     }
     
     func stopNavigation() {
-        print("NavigationViewModel: Stopping navigation.")
+        logger.info("Stopping navigation.")
         // Reset all state back to idle
         self.isNavigating = false
         self.isCalculatingRoute = false
@@ -166,7 +177,7 @@ class NavigationViewModel: ObservableObject {
     }
     
     func cancelRouteSelection() {
-        print("NavigationViewModel: Route selection cancelled.")
+        logger.info("Route selection cancelled.")
         withAnimation {
             self.navigationState = .idle
         }
@@ -180,7 +191,7 @@ class NavigationViewModel: ObservableObject {
         // --- Rerouting Check ---
         let rerouteThreshold: CLLocationDistance = 50 // meters
         if !isUser(userLocation, on: currentStep.polyline, within: rerouteThreshold) {
-            print("NavigationViewModel: User is off-route. Requesting recalculation.")
+            logger.info("User is off-route. Requesting recalculation.")
             Task {
                 if let destination = self.destinationSpot, let _ = self.route?.transportType {
                     // Automatically recalculate with the same parameters
@@ -192,7 +203,6 @@ class NavigationViewModel: ObservableObject {
 
         // --- Step Progression ---
         let stepCompletionThreshold: CLLocationDistance = 25 // meters
-        // This is the CORRECT code
         let pointCount = currentStep.polyline.pointCount
         guard pointCount > 0 else { return } // Safety check
         let lastMapPoint = currentStep.polyline.points()[pointCount - 1] // Access by index
@@ -213,10 +223,10 @@ class NavigationViewModel: ObservableObject {
     private func advanceToNextStep() {
         currentStepIndex += 1
         if currentStepIndex < routeSteps.count {
-            print("NavigationViewModel: Advancing to step \(currentStepIndex + 1)/\(routeSteps.count)")
+            logger.debug("Advancing to step \(self.currentStepIndex + 1)/\(self.routeSteps.count)")
             self.currentStep = routeSteps[currentStepIndex]
         } else {
-            print("NavigationViewModel: Arrived at destination.")
+            logger.info("User arrived at destination: \(self.destinationSpot?.name ?? "Unknown")")
             // You can add a brief "Arrived" state here before stopping
             stopNavigation()
         }
@@ -245,8 +255,8 @@ class NavigationViewModel: ObservableObject {
         }
     }
     
+    /// Checks if a user's location is within a specified tolerance of a route's polyline.
     private func isUser(_ userLocation: CLLocation, on polyline: MKPolyline, within tolerance: CLLocationDistance) -> Bool {
-        // (This helper function remains the same as before)
         let userPoint = MKMapPoint(userLocation.coordinate)
         for i in 0..<(polyline.pointCount - 1) {
             let start = polyline.points()[i]

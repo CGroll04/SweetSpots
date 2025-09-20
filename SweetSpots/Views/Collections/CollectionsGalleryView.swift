@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+/// A view that displays all of the user's collections in a grid layout.
 struct CollectionsGalleryView: View {
     // MARK: - Environment
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
@@ -15,7 +16,6 @@ struct CollectionsGalleryView: View {
     // MARK: - State
     @State private var isShowingAddSheet = false
     
-    // Define the grid layout: two columns with flexible width
     private let columns: [GridItem] = [
         GridItem(.flexible(), spacing: 16),
         GridItem(.flexible(), spacing: 16)
@@ -41,7 +41,7 @@ struct CollectionsGalleryView: View {
         }
         .navigationTitle("Collections")
         .sheet(isPresented: $isShowingAddSheet) {
-            // Present the existing AddCollectionView when the FAB is tapped
+            // EnvironmentObjects are passed down automatically.
             AddCollectionView()
                 .environmentObject(spotsViewModel)
                 .environmentObject(collectionViewModel)
