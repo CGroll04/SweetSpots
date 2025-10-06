@@ -6,6 +6,7 @@
 
 import SwiftUI
 import FirebaseCore
+import FirebaseAppCheck
 import UserNotifications
 import os.log
 
@@ -58,10 +59,20 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
     // Track notification permission state to coordinate with LocationManager
     private var hasRequestedNotificationPermission = false
     private var notificationPermissionGranted = false
+    private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "AppDelegate")
     
     func application(_ application: UIApplication,
                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        
+        logger.debug("APP LAUNCH: Configuring App Check debug provider...")
+        
+        let providerFactory = AppCheckDebugProviderFactory()
+        AppCheck.setAppCheckProviderFactory(providerFactory)
+        
         FirebaseApp.configure()
+        
+        logger.debug("APP LAUNCH: Firebase configured.")
+        
         setupNotificationCenter()
         setupRemoteNotifications(for: application)
         

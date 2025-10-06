@@ -113,9 +113,11 @@ struct CollectionDetailView: View {
             .background(Color.themeBackground.ignoresSafeArea())
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    sortMenu
-                    filterButton
-                    moreMenu(for: collection)
+                    HStack(spacing: 8) {
+                        sortMenu
+                        filterButton
+                        moreMenu(for: collection)
+                    }
                 }
             }
             .sheet(item: $selectedMapSpot) { spot in
@@ -170,26 +172,36 @@ struct CollectionDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal)
             }
+            
+            let spotCount = displayedSpots.count
+            Text("\(spotCount) \(spotCount == 1 ? "Spot" : "Spots")")
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(.secondary)
+                .padding(.horizontal)
+                .padding(.top, 2)
         }
         .padding(.top) // Give the whole header some vertical space
     }
-    
+
     private func listView(for collection: SpotCollection) -> some View {
-        ScrollView {
-            LazyVStack(spacing: 16) {
-                ForEach(displayedSpots) { spot in
-                    NavigationLink(destination: SpotDetailView(spotId: spot.id ?? "", presentedFrom: .list)) {
-                        SpotCardView(
-                            spot: spot,
-                            userLocation: locationManager.userLocation,
-                            onEdit: { editSpot(spot) },
-                            onDelete: { requestDeleteConfirmation(for: spot) },
-                            onShare: { Task { await handleShare(for: spot) } }
-                        )
+        VStack(spacing: 0) {
+            ScrollView {
+                LazyVStack(spacing: 16) {
+                    ForEach(displayedSpots) { spot in
+                        NavigationLink(destination: SpotDetailView(spotId: spot.id ?? "", presentedFrom: .list)) {
+                            SpotCardView(
+                                spot: spot,
+                                userLocation: locationManager.userLocation,
+                                onEdit: { editSpot(spot) },
+                                onDelete: { requestDeleteConfirmation(for: spot) },
+                                onShare: { Task { await handleShare(for: spot) } }
+                            )
+                        }
                     }
                 }
+                .padding()
             }
-            .padding(.horizontal)
         }
     }
     
@@ -273,9 +285,28 @@ struct CollectionDetailView: View {
     private func moreMenu(for collection: SpotCollection) -> some View {
         Menu {
             Button { isShowingEditCollectionSheet = true } label: { Label("Edit Details", systemImage: "pencil") }
-            Button { Task { await handleShareCollection(for: collection) } } label: { Label("Share Collection", systemImage: "square.and.arrow.up") }
-            Divider()
+            
             Button { isShowingManageSpotsSheet = true } label: { Label("Edit Spots in Collection", systemImage: "checklist") }
+            
+            Menu {
+                Button {
+                    // Share privately (temporary link for a friend)
+                    Task { await handleShareCollection(for: collection, publicly: false) }
+                } label: {
+                    Label("Share Privately...", systemImage: "person.2.fill")
+                }
+                
+                Button {
+                    // Share publicly (permanent link for social media)
+                    Task { await handleShareCollection(for: collection, publicly: true) }
+                } label: {
+                    Label("Share Publicly...", systemImage: "globe")
+                }
+            } label: {
+                 Label("Share Collection", systemImage: "square.and.arrow.up")
+            }
+            
+            Divider()
             Button(role: .destructive) { isShowingDeleteConfirmation = true } label: { Label("Delete Collection", systemImage: "trash") }
         } label: {
             Label("More", systemImage: "ellipsis.circle")
@@ -309,24 +340,23 @@ struct CollectionDetailView: View {
     }
     
     private func handleShare(for spot: Spot) async {
-        guard let userId = authViewModel.userSession?.uid else { return }
+        guard let spotId = spot.id else {
+            logger.error("Attempted to share a spot with no ID.")
+            return
+        }
 
         do {
+            // This now calls the new function to generate a temporary, private link
+            let url = try await SpotShareManager.makePrivateShareURL(for: .spot(id: spotId))
+
             let senderName = authViewModel.userSession?.displayName
-
-            let url = try await SpotShareManager.makeShareURL(
-                from: spot,
-                collectionName: nil, // We pass nil as a spot can be in many collections
-                senderName: senderName,
-                userId: userId
-            )
-
             let text = senderName != nil ? "\(senderName!) shared '\(spot.name)' with you!" : "Check out '\(spot.name)' on SweetSpots!"
             itemToShare = ShareableContent(text: text, url: url)
-            logger.info("Successfully created share link for spot: \(spot.name)")
+            logger.info("Successfully created private share link for spot: \(spot.name)")
 
         } catch {
             logger.error("Failed to create share link for spot '\(spot.name)': \(error.localizedDescription)")
+            // You could show an error alert to the user here
         }
     }
     
@@ -346,15 +376,24 @@ struct CollectionDetailView: View {
         }
     }
     
-    private func handleShareCollection(for collection: SpotCollection) async {
+    private func handleShareCollection(for collection: SpotCollection, publicly: Bool) async {
+        guard let collectionId = collection.id else { return }
         do {
-            let url = try await SpotShareManager.makePublicCollectionShareURL(for: collection)
+            let url: URL
+            if publicly {
+                // Call the function for permanent, public links
+                url = try await SpotShareManager.makePublicCollectionShareURL(for: collection)
+            } else {
+                // Call the new function for temporary, private links
+                url = try await SpotShareManager.makePrivateShareURL(for: .collection(id: collectionId))
+            }
+
             let senderName = authViewModel.userSession?.displayName ?? "A friend"
-            let text = "\(senderName) shared the '\(collection.name)' collection with you!"
+            let text = "\(senderName) shared their '\(collection.name)' collection with you!"
             itemToShare = ShareableContent(text: text, url: url)
-            logger.info("Successfully created public share link for collection: \(collection.name)")
+
         } catch {
-            logger.error("Failed to create public share link for collection '\(collection.name)': \(error.localizedDescription)")
+            logger.error("Failed to create share link: \(error.localizedDescription)")
         }
     }
 }

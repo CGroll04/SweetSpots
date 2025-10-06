@@ -466,3 +466,27 @@ extension Color {
         }
     }
 }
+
+extension Color {
+    static func gradient(for string: String) -> [Color] {
+        var hash: Int = 0
+        for char in string.unicodeScalars {
+            hash = Int(char.value) &+ (hash << 5) &+ (hash << 1) &- hash
+        }
+        
+        let color1Hue = Double(abs(hash) % 360) / 360.0
+        let color2Hue = (color1Hue + 0.3).truncatingRemainder(dividingBy: 1.0)
+
+        return [
+            Color(hue: color1Hue, saturation: 0.6, brightness: 0.8),
+            Color(hue: color2Hue, saturation: 0.7, brightness: 0.6)
+        ]
+    }
+}
+
+extension Character {
+    var isEmoji: Bool {
+        guard let scalar = unicodeScalars.first else { return false }
+        return scalar.properties.isEmoji && scalar.properties.isEmojiPresentation
+    }
+}

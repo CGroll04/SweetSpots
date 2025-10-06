@@ -179,6 +179,7 @@ struct ImportCollectionView: View {
         do {
             let newCollectionId = try await collectionViewModel.addCollection(
                 name: collectionName,
+                emoji: payload.emoji,
                 userId: userId,
                 description: payload.collectionDescription
             )

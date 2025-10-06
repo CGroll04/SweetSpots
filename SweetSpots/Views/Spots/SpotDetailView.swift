@@ -30,7 +30,7 @@ enum PresentationContext {
     case map
 }
 
-fileprivate struct SpotDetailAlertInfo: Identifiable {
+struct SpotDetailAlertInfo: Identifiable {
     let id = UUID()
     let title: String
     let message: String
@@ -237,20 +237,17 @@ struct SpotDetailView: View {
     }
     
     private func handleShare(for spot: Spot) async {
-        guard let userId = authViewModel.userSession?.uid else { return }
+        guard let spotId = spot.id else { return }
 
         do {
-            let senderName = authViewModel.userSession?.displayName
-            let url = try await SpotShareManager.makeShareURL(
-                from: spot,
-                collectionName: nil,
-                senderName: senderName,
-                userId: userId
-            )
+            // This now calls the new function to generate a temporary, private link
+            let url = try await SpotShareManager.makePrivateShareURL(for: .spot(id: spotId))
 
+            let senderName = authViewModel.userSession?.displayName
             let text = senderName != nil ? "\(senderName!) shared '\(spot.name)' with you!" : "Check out '\(spot.name)' on SweetSpots!"
             itemToShare = ShareableContent(text: text, url: url)
-            logger.info("Successfully created share link for spot: \(spot.name)")
+            logger.info("Successfully created private share link for spot: \(spot.name)")
+            
         } catch {
             logger.error("Failed to create share link for spot '\(spot.name)': \(error.localizedDescription)")
             alertInfo = SpotDetailAlertInfo(title: "Share Error", message: "Could not create a share link. Please try again.")

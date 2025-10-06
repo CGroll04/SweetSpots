@@ -22,6 +22,7 @@ struct SpotCardView: View {
 //    @State private var showUndoBanner = false
 //    @State private var undoTimer: Timer? = nil
     @Environment(\.colorScheme) var colorScheme
+    @State private var hapticGenerator = UIImpactFeedbackGenerator(style: .medium)
     
     var body: some View {
         VStack(spacing: 0) {
@@ -105,9 +106,18 @@ struct SpotCardView: View {
                         colorScheme == .dark ? Color.white.opacity(0.2) : Color.black.opacity(0.1),
                         lineWidth: 1
                     )
-                }            .task(id: spot.id) {
+                }
+            .task(id: spot.id) {
                 await updateLocationDisplay()
             }
+            .contextMenu {
+                contextMenuContent
+            }
+            .onLongPressGesture(minimumDuration: 0.5) {
+                // This code now runs only after the long press is successful
+                hapticGenerator.impactOccurred()
+            }
+
 
             // Undo Popup
 //            if showUndoBanner {
@@ -143,6 +153,23 @@ struct SpotCardView: View {
 //            }
 //        }
 //    }
+    
+    @ViewBuilder
+    private var contextMenuContent: some View {
+        Button(action: onEdit) {
+            Label("Edit Spot", systemImage: "pencil")
+        }
+        
+        Button(action: onShare) {
+            Label("Share Spot", systemImage: "square.and.arrow.up")
+        }
+        
+        Divider()
+        
+        Button(role: .destructive, action: onDelete) {
+            Label("Delete Spot", systemImage: "trash")
+        }
+    }
     
     private func updateLocationDisplay() async {
         // Guard against no user location

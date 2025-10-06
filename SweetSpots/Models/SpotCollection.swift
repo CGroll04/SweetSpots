@@ -23,6 +23,8 @@ struct SpotCollection: Identifiable, Codable, Hashable {
     /// An optional, user-provided description for the collection.
     var descriptionText: String?
     
+    var emoji: String?
+    
     
     /// The server-side timestamp of when the collection was created. Nil until set by Firestore.
     @ServerTimestamp var createdAt: Timestamp?
@@ -34,12 +36,14 @@ struct SpotCollection: Identifiable, Codable, Hashable {
         id: String? = nil,
         userId: String,
         name: String,
-        descriptionText: String? = nil
+        descriptionText: String? = nil,
+        emoji: String? = nil
     ) {
         self.id = id
         self.userId = userId
         self.name = name
         self.descriptionText = descriptionText
+        self.emoji = emoji
     }
     
     

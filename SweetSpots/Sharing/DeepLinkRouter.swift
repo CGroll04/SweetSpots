@@ -1,13 +1,9 @@
-//
-//  DeepLinkRouter.swift
-//  SweetSpots
-//
-//  Created by Charlie Groll on 2025-08-25.
-//
+// DeepLinkRouter.swift
 
 import Foundation
 import SwiftUI
 import FirebaseFirestore
+import FirebaseFunctions
 import os.log
 
 /// A static router responsible for parsing and handling incoming deep link URLs.
@@ -19,7 +15,7 @@ enum DeepLinkRouter {
     private static var lastHandledTime: Date?
 
     static func handle(url: URL, navigation: NavigationCoordinator) {
-        // 1. De-bouncing logic (This part is correct)
+        // De-bouncing logic
         if let lastURL = lastHandledURL, let lastTime = lastHandledTime,
            url == lastURL && Date().timeIntervalSince(lastTime) < 2.0 {
             logger.debug("Ignoring duplicate URL handled within 2s.")
@@ -28,22 +24,15 @@ enum DeepLinkRouter {
         lastHandledURL = url
         lastHandledTime = Date()
         
-        // 2. Get URL components
         guard let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             logger.warning("Could not create URL components from URL: \(url.absoluteString)")
             return
         }
         
-        // 3. --- CORRECTED ROUTING LOGIC ---
-        // First, check if it's our custom app scheme.
         if comps.scheme == "sweetspotsapp" {
             handleAppScheme(components: comps, navigation: navigation)
-        
-        // If not, THEN check if it's a valid Universal Link host.
         } else if let host = comps.host, allowedHosts.contains(host) {
             handleUniversalLink(components: comps, navigation: navigation)
-            
-        // Otherwise, it's an unknown URL.
         } else {
             logger.warning("URL is from an unknown source: \(url.absoluteString)")
         }
@@ -51,10 +40,7 @@ enum DeepLinkRouter {
     
     private static func handleUniversalLink(components: URLComponents, navigation: NavigationCoordinator) {
         let pathComponents = components.path.split(separator: "/").map(String.init)
-        guard let routeType = pathComponents.first else {
-            logger.warning("Universal Link path is empty.")
-            return
-        }
+        guard let routeType = pathComponents.first else { return }
         
         switch routeType {
         case "s":
@@ -66,8 +52,6 @@ enum DeepLinkRouter {
         }
     }
     
-    
-    // Your new function for the app scheme
     private static func handleAppScheme(components: URLComponents, navigation: NavigationCoordinator) {
         guard components.host == "addSpotFromShare",
               let sourceURLString = components.queryItems?.first(where: { $0.name == "sourceURL" })?.value,
@@ -78,41 +62,50 @@ enum DeepLinkRouter {
         }
         
         Task { @MainActor in
-            // This will trigger the .onChange in MainTabView
             navigation.incomingSharedURL = url
         }
     }
     
-    /// Handles temporary shares for both individual spots and collections from the `/s/` path.
+    /// Handles temporary shares by verifying a JWT and fetching the data.
     private static func handleTemporaryShare(pathComponents: [String], navigation: NavigationCoordinator) {
-        // Expected path: ["s", "spot" or "collection", "{shareID}"]
-        guard pathComponents.count == 3 else { return }
-        let shareType = pathComponents[1]
-        let shareId = pathComponents[2]
+        // Expected path: ["s", "t", "{jwt_token}"]
+        guard pathComponents.count == 3, pathComponents[1] == "t" else { return }
+        let token = pathComponents[2]
         
         Task {
             do {
-                let db = Firestore.firestore()
-                let doc = try await db.collection("shares").document(shareId).getDocument()
+                let functions = Functions.functions()
+                let result = try await functions.httpsCallable("verifyAndFetchSharedData").call(["token": token])
                 
-                if shareType == "spot" {
-                    let payload = try doc.data(as: SharedSpotPayload.self)
-                    logger.info("Successfully fetched temporary spot payload for shareID: \(shareId)")
+                guard let responseData = result.data as? [String: Any],
+                      let type = responseData["type"] as? String,
+                      let data = responseData["data"] as? [String: Any] else {
+                    logger.error("Could not parse response from verification function.")
+                    return
+                }
+
+                // Decode the data from the dictionary back into our Swift models
+                let jsonData = try JSONSerialization.data(withJSONObject: data)
+                let decoder = JSONDecoder()
+
+                if type == "spot" {
+                    let payload = try decoder.decode(SharedSpotPayload.self, from: jsonData)
+                    logger.info("Successfully fetched temporary spot payload via token.")
                     await MainActor.run { navigation.incomingSharedPayload = payload }
-                } else if shareType == "collection" {
-                    let payload = try doc.data(as: SharedCollectionPayload.self)
-                    logger.info("Successfully fetched temporary collection payload for shareID: \(shareId)")
+                } else if type == "collection" {
+                    let payload = try decoder.decode(SharedCollectionPayload.self, from: jsonData)
+                    logger.info("Successfully fetched temporary collection payload via token.")
                     await MainActor.run { navigation.incomingSharedCollectionPayload = payload }
                 }
             } catch {
-                logger.error("Failed to fetch temporary share payload for ID \(shareId): \(error.localizedDescription)")
+                logger.error("Failed to verify and fetch share data for token: \(error.localizedDescription)")
+                // TODO: You could show an "Invalid or Expired Link" error to the user here.
             }
         }
     }
-    
+
     /// Handles permanent, public collection links from the /c/ path.
     private static func handlePermanentCollectionShare(pathComponents: [String], navigation: NavigationCoordinator) {
-        // Expected path: ["c", "{userID}", "{collectionID}"]
         guard pathComponents.count == 3 else { return }
         let userId = pathComponents[1]
         let collectionId = pathComponents[2]
@@ -120,7 +113,6 @@ enum DeepLinkRouter {
         
         Task {
             do {
-                // This single function now contains all the logic for fetching the data
                 let payload = try await fetchPublicCollection(userId: userId, collectionId: collectionId)
                 logger.info("Successfully fetched permanent collection payload.")
                 await MainActor.run {
@@ -173,7 +165,6 @@ enum DeepLinkRouter {
             collectionName: collection.name,
             collectionDescription: collection.descriptionText,
             spots: spotPayloads,
-            senderName: nil // Sender name isn't relevant for a permanent public link
         )
     }
 }

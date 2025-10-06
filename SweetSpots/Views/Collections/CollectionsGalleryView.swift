@@ -12,9 +12,14 @@ struct CollectionsGalleryView: View {
     // MARK: - Environment
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
     @EnvironmentObject private var spotsViewModel: SpotViewModel
+    @EnvironmentObject private var authViewModel: AuthViewModel
     
     // MARK: - State
     @State private var isShowingAddSheet = false
+    @State private var collectionToEdit: SpotCollection?
+    @State private var collectionToManage: SpotCollection?
+    @State private var collectionToDelete: SpotCollection?
+    @State private var itemToShare: ShareableContent?
     
     private let columns: [GridItem] = [
         GridItem(.flexible(), spacing: 16),
@@ -46,6 +51,23 @@ struct CollectionsGalleryView: View {
                 .environmentObject(spotsViewModel)
                 .environmentObject(collectionViewModel)
         }
+        .sheet(item: $collectionToEdit) { collection in
+            EditCollectionView(collection: collection)
+        }
+        .sheet(item: $collectionToManage) { collection in
+            ManageSpotsInCollectionView(collection: collection)
+        }
+        .sheet(item: $itemToShare) { item in
+            ShareSheet(items: [item.text, item.url])
+        }
+        .confirmationDialog(
+            "Delete '\(collectionToDelete?.name ?? "Collection")'?",
+            isPresented: .constant(collectionToDelete != nil),
+            titleVisibility: .visible,
+            presenting: collectionToDelete
+        ) { collection in
+            deleteButtons(for: collection)
+        }
     }
     
     // MARK: - Subviews
@@ -55,17 +77,41 @@ struct CollectionsGalleryView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 16) {
                 ForEach(collectionViewModel.collections) { collection in
-                    NavigationLink(destination: CollectionDetailView(collectionID: collection.id ?? "")) {
-                        CollectionCardView(
-                            collection: collection,
-                            spotCount: spotCount(for: collection.id)
-                        )
+                    VStack{
+                        NavigationLink(destination: CollectionDetailView(collectionID: collection.id ?? "")) {
+                            
+                            let spotsInCollection = spotsViewModel.spots.filter {
+                                $0.collectionIds.contains(collection.id ?? "")
+                            }
+                            
+                            CollectionCardView(
+                                collection: collection,
+                                spotsInCollection: spotsInCollection,
+                                onSharePrivately: {
+                                    Task { await handleShare(for: collection, publicly: false) }
+                                },
+                                onSharePublicly: {
+                                    Task { await handleShare(for: collection, publicly: true) }
+                                },
+                                onEditDetails: {
+                                    collectionToEdit = collection
+                                },
+                                onManageSpots: {
+                                    collectionToManage = collection
+                                },
+                                onDelete: {
+                                    collectionToDelete = collection
+                                }
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
             .padding()
         }
     }
+
     
     /// The view to show when the user has no collections.
     private var emptyStateView: some View {
@@ -103,10 +149,47 @@ struct CollectionsGalleryView: View {
     }
     
     // MARK: - Helper Methods
+    @ViewBuilder
+    private func deleteButtons(for collection: SpotCollection) -> some View {
+        Button("Delete Collection & Spots", role: .destructive) {
+            Task { await deleteCollection(collection, mode: .collectionAndSpots) }
+        }
+        Button("Remove Collection Only", role: .destructive) {
+            Task { await deleteCollection(collection, mode: .collectionOnly) }
+        }
+        Button("Cancel", role: .cancel) { collectionToDelete = nil }
+    }
     
-    /// Calculates the number of spots in a given collection.
-    private func spotCount(for collectionId: String?) -> Int {
-        guard let collectionId = collectionId else { return 0 }
-        return spotsViewModel.spots.filter { $0.collectionIds.contains(collectionId) }.count
+    private func deleteCollection(_ collection: SpotCollection, mode: CollectionViewModel.DeletionMode) async {
+        do {
+            try await collectionViewModel.deleteCollection(
+                collection,
+                mode: mode,
+                allSpots: spotsViewModel.spots
+            )
+        } catch {
+            // Handle error, e.g., show an alert
+            print("Failed to delete collection: \(error.localizedDescription)")
+        }
+        collectionToDelete = nil
+    }
+
+    private func handleShare(for collection: SpotCollection, publicly: Bool) async {
+        guard let collectionId = collection.id else { return }
+        do {
+            let url: URL
+            if publicly {
+                url = try await SpotShareManager.makePublicCollectionShareURL(for: collection)
+            } else {
+                url = try await SpotShareManager.makePrivateShareURL(for: .collection(id: collectionId))
+            }
+            
+            let senderName = authViewModel.userSession?.displayName ?? "A friend"
+            let text = "\(senderName) shared the '\(collection.name)' collection with you!"
+            itemToShare = ShareableContent(text: text, url: url)
+        } catch {
+            // Handle error
+            print("Failed to create share link: \(error.localizedDescription)")
+        }
     }
 }

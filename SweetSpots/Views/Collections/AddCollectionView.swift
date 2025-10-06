@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 import os.log
 
 /// A view presented modally for creating a new collection and selecting spots to include in it.
@@ -18,6 +19,9 @@ struct AddCollectionView: View {
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
     @EnvironmentObject private var authViewModel: AuthViewModel
     @Environment(\.dismiss) private var dismiss
+    
+    @FocusState private var isEmojiFieldFocused: Bool
+    @State private var collectionEmoji: String = ""
     
     // State
     @State private var selectedSpotIDs: Set<String> = []
@@ -36,8 +40,31 @@ struct AddCollectionView: View {
         NavigationView {
             Form {
                 // SECTION 1: Name the Collection
-                Section(header: Text("Collection Name")) {
-                    TextField("e.g., Summer Trip, Best Cafes", text: $collectionName)
+                Section(header: Text("Collection Details")) {
+                    TextField("Name (e.g., Summer Trip, Best Cafes)", text: $collectionName)
+                    HStack {
+                        Text("Emoji (Optional)")
+                        Spacer()
+                        ZStack {
+                            // The actual TextField, with no visible title
+                            TextField("", text: $collectionEmoji)
+                                .frame(width: 50)
+                                .multilineTextAlignment(.center)
+                                .focused($isEmojiFieldFocused) // Link the focus state
+                                .onChange(of: collectionEmoji) {
+                                    if let firstChar = collectionEmoji.first, firstChar.isEmoji {
+                                        collectionEmoji = String(firstChar)
+                                    } else {
+                                        collectionEmoji = ""
+                                    }
+                                }
+
+                            // The custom placeholder
+                            if collectionEmoji.isEmpty && !isEmojiFieldFocused {
+                                Text("😀")
+                            }
+                        }
+                    }
                 }
                 
                 // SECTION 2: Select Spots
@@ -101,6 +128,7 @@ struct AddCollectionView: View {
             do {
                 let newCollectionId = try await collectionViewModel.addCollection(
                     name: collectionName,
+                    emoji: collectionEmoji.isEmpty ? nil : collectionEmoji,
                     userId: userId
                 )
 

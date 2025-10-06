@@ -28,6 +28,7 @@ struct SpotListView: View {
     @State private var spotToDelete: Spot? = nil
     @State private var showingDeleteConfirmation = false
 //    @State private var selectedTab: SpotTab = .notVisited
+    @State private var alertInfo: SpotDetailAlertInfo? = nil
     
     @State private var itemToShare: ShareableContent? = nil
     
@@ -281,9 +282,8 @@ struct SpotListView: View {
         } else if displayedSpots.isEmpty {
             emptyStateView(description: emptyStateDescriptionForFilters())
         } else {
-            Spacer()
             spotList(for: displayedSpots)
-//            spotsScrollView()
+//          spotsScrollView()
         }
     }
 
@@ -330,6 +330,15 @@ struct SpotListView: View {
     @ViewBuilder
     private func spotList(for spots: [Spot]) -> some View {
         ScrollView {
+            let spotCount = displayedSpots.count
+            Text("\(spotCount) \(spotCount == 1 ? "SweetSpot" : "SweetSpots")")
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+            
             LazyVStack(spacing: 16) {
                 ForEach(spots) { spot in
                     NavigationLink(value: spot) {
@@ -378,24 +387,20 @@ struct SpotListView: View {
     }
     
     private func handleShare(for spot: Spot) async {
-        guard let userId = authViewModel.userSession?.uid else { return }
+        guard let spotId = spot.id else { return }
 
         do {
+            // This now calls the new function to generate a temporary, private link
+            let url = try await SpotShareManager.makePrivateShareURL(for: .spot(id: spotId))
+
             let senderName = authViewModel.userSession?.displayName
-
-            let url = try await SpotShareManager.makeShareURL(
-                from: spot,
-                collectionName: nil, // We pass nil as a spot can be in many collections
-                senderName: senderName,
-                userId: userId
-            )
-
             let text = senderName != nil ? "\(senderName!) shared '\(spot.name)' with you!" : "Check out '\(spot.name)' on SweetSpots!"
             itemToShare = ShareableContent(text: text, url: url)
-
+            logger.info("Successfully created private share link for spot: \(spot.name)")
+            
         } catch {
-            logger.error("Failed to create share link: \(error)")
-            // Optionally, show an error alert here
+            logger.error("Failed to create share link for spot '\(spot.name)': \(error.localizedDescription)")
+            alertInfo = SpotDetailAlertInfo(title: "Share Error", message: "Could not create a share link. Please try again.")
         }
     }
     
@@ -415,37 +420,38 @@ struct SpotListView: View {
     @ToolbarContentBuilder
     private func navigationToolbarItems() -> some ToolbarContent {
         ToolbarItemGroup(placement: .navigationBarTrailing) {
-            
-            Button {
-                showingAddSheet = true
-            } label: {
-                Image(systemName: "plus")
-                    .foregroundStyle(Color.themePrimary)
-            }
-            
-            sortMenu()
-            
-            Button {
-                showingFilterPopover = true
-            } label: {
-                let isFilterActive = collectionFilterState != .all || !selectedCategoryFilters.isEmpty
-                Label("Filter", systemImage: isFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                    .foregroundStyle(Color.themePrimary)
-            }
-            .popover(isPresented: $showingFilterPopover) {
-                FilterMenuView(
-                    collectionFilterState: $collectionFilterState,
-                    selectedCategoryFilters: $selectedCategoryFilters,
-                    showCollectionFilterOptions: true
-                )
-                .presentationCompactAdaptation(.popover)
-            }
-            
-            Button {
-                showingSettingsSheet = true
-            } label: {
-                Label("Settings", systemImage: "gearshape")
-                    .foregroundStyle(Color.themePrimary)
+            HStack(spacing: 8) {
+                Button {
+                    showingAddSheet = true
+                } label: {
+                    Image(systemName: "plus")
+                        .foregroundStyle(Color.themePrimary)
+                }
+                
+                sortMenu()
+                
+                Button {
+                    showingFilterPopover = true
+                } label: {
+                    let isFilterActive = collectionFilterState != .all || !selectedCategoryFilters.isEmpty
+                    Label("Filter", systemImage: isFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                        .foregroundStyle(Color.themePrimary)
+                }
+                .popover(isPresented: $showingFilterPopover) {
+                    FilterMenuView(
+                        collectionFilterState: $collectionFilterState,
+                        selectedCategoryFilters: $selectedCategoryFilters,
+                        showCollectionFilterOptions: true
+                    )
+                    .presentationCompactAdaptation(.popover)
+                }
+                
+                Button {
+                    showingSettingsSheet = true
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                        .foregroundStyle(Color.themePrimary)
+                }
             }
         }
     }

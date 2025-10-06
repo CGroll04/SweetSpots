@@ -131,7 +131,7 @@ class CollectionViewModel: ObservableObject {
     }
 
     /// Adds a new collection for the specified user.
-    func addCollection(name: String, userId: String, description: String? = nil) async throws -> String {
+    func addCollection(name: String, emoji: String?, userId: String, description: String? = nil) async throws -> String {
         guard let trimmedName = name.trimmed() else {
             throw CollectionError.emptyName
         }
@@ -141,7 +141,7 @@ class CollectionViewModel: ObservableObject {
         }
 
         let finalDescription = description?.trimmed()
-        var newCollection = SpotCollection(userId: userId, name: trimmedName, descriptionText: finalDescription)
+        var newCollection = SpotCollection(userId: userId, name: trimmedName, descriptionText: finalDescription, emoji: emoji)
         
         do {
             let documentReference = try await userCollectionsRef(userId: userId).addDocument(from: newCollection)
@@ -186,7 +186,8 @@ class CollectionViewModel: ObservableObject {
         
         // 1. Manually create a dictionary to ensure we can handle field deletion.
         var updateData: [String: Any] = [
-            "name": trimmedName
+            "name": trimmedName,
+            "isPublic": collection.isPublic
         ]
         
         // 2. If the description is present, add it. If it's nil or an empty string,
@@ -195,6 +196,12 @@ class CollectionViewModel: ObservableObject {
             updateData["descriptionText"] = description
         } else {
             updateData["descriptionText"] = FieldValue.delete()
+        }
+        
+        if let emoji = collection.emoji, !emoji.isEmpty {
+            updateData["emoji"] = emoji
+        } else {
+            updateData["emoji"] = FieldValue.delete()
         }
         
         let docRef = userCollectionsRef(userId: collection.userId).document(collectionId)

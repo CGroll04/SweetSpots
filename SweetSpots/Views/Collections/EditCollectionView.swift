@@ -28,6 +28,8 @@ struct EditCollectionView: View {
     
     let collection: SpotCollection
     
+    @FocusState private var isEmojiFieldFocused: Bool
+    @State private var editableEmoji: String
     @State private var editableName: String
     @State private var editableDescription: String
     @State private var showDeleteConfirmation: Bool = false
@@ -42,6 +44,7 @@ struct EditCollectionView: View {
         _editableName = State(initialValue: collection.name)
         _editableDescription = State(initialValue: collection.descriptionText ?? "")
         _isPublic = State(initialValue: collection.isPublic)
+        _editableEmoji = State(initialValue: collection.emoji ?? "")
     }
 
     var body: some View {
@@ -50,6 +53,30 @@ struct EditCollectionView: View {
                 Section("Collection Details") { // Simplified header
                     TextField("Name", text: $editableName)
                         .disabled(isProcessing)
+                    
+                    HStack {
+                        Text("Emoji (Optional)")
+                        Spacer()
+                        ZStack {
+                            // The actual TextField, with no visible title
+                            TextField("", text: $editableEmoji)
+                                .frame(width: 50)
+                                .multilineTextAlignment(.center)
+                                .focused($isEmojiFieldFocused) // Link the focus state
+                                .onChange(of: editableEmoji) {
+                                    if let firstChar = editableEmoji.first, firstChar.isEmoji {
+                                        editableEmoji = String(firstChar)
+                                    } else {
+                                        editableEmoji = ""
+                                    }
+                                }
+
+                            // The custom placeholder
+                            if editableEmoji.isEmpty && !isEmojiFieldFocused {
+                                Text("😀")
+                            }
+                        }
+                    }
                     
                     // Using TextEditor for potentially multi-line description
                     VStack(alignment: .leading) {
@@ -156,8 +183,10 @@ struct EditCollectionView: View {
         let descriptionChanged = trimmedDescription != (collection.descriptionText ?? "")
         
         let sharingChanged = isPublic != collection.isPublic
+        
+        let emojiChanged = editableEmoji != (collection.emoji ?? "")
 
-        return nameChanged || descriptionChanged || sharingChanged
+        return nameChanged || descriptionChanged || sharingChanged || emojiChanged
     }
 
     private func saveChanges() {
@@ -187,6 +216,7 @@ struct EditCollectionView: View {
         updatedCollection.name = trimmedName
         updatedCollection.descriptionText = editableDescription.trimmedSafe().isEmpty ? nil : editableDescription.trimmedSafe()
         updatedCollection.isPublic = self.isPublic
+        updatedCollection.emoji = editableEmoji.isEmpty ? nil : editableEmoji
         
         collectionViewModel.updateCollection(updatedCollection) { result in
             isProcessing = false

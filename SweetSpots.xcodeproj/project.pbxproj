@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		2745A6EA2E91C09900C0A583 /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = 2745A6E92E91C09900C0A583 /* FirebaseFunctions */; };
+		2745A6EC2E91C34200C0A583 /* FirebaseAppCheck in Frameworks */ = {isa = PBXBuildFile; productRef = 2745A6EB2E91C34200C0A583 /* FirebaseAppCheck */; };
 		278FF5742DED025200578BF1 /* SweetSpotsShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 278FF56A2DED025200578BF1 /* SweetSpotsShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		27DDDC6A2DC81107007F073E /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 27DDDC692DC81107007F073E /* FirebaseAuth */; };
 		27DDDC6C2DC81107007F073E /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 27DDDC6B2DC81107007F073E /* FirebaseFirestore */; };
@@ -115,6 +117,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2745A6EC2E91C34200C0A583 /* FirebaseAppCheck in Frameworks */,
+				2745A6EA2E91C09900C0A583 /* FirebaseFunctions in Frameworks */,
 				27DDDC6A2DC81107007F073E /* FirebaseAuth in Frameworks */,
 				27DDDC6C2DC81107007F073E /* FirebaseFirestore in Frameworks */,
 			);
@@ -205,6 +209,8 @@
 			packageProductDependencies = (
 				27DDDC692DC81107007F073E /* FirebaseAuth */,
 				27DDDC6B2DC81107007F073E /* FirebaseFirestore */,
+				2745A6E92E91C09900C0A583 /* FirebaseFunctions */,
+				2745A6EB2E91C34200C0A583 /* FirebaseAppCheck */,
 			);
 			productName = SweetSpots;
 			productReference = 27DDDC3E2DC81019007F073E /* SweetSpots.app */;
@@ -264,7 +270,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1640;
-				LastUpgradeCheck = 1630;
+				LastUpgradeCheck = 2600;
 				TargetAttributes = {
 					278FF5692DED025200578BF1 = {
 						CreatedOnToolsVersion = 16.4;
@@ -501,6 +507,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -558,6 +565,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -767,6 +775,16 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		2745A6E92E91C09900C0A583 /* FirebaseFunctions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 27DDDC682DC81107007F073E /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFunctions;
+		};
+		2745A6EB2E91C34200C0A583 /* FirebaseAppCheck */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 27DDDC682DC81107007F073E /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAppCheck;
+		};
 		27DDDC692DC81107007F073E /* FirebaseAuth */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 27DDDC682DC81107007F073E /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;

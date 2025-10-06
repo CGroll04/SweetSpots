@@ -15,7 +15,7 @@ struct ActionsMenuView: View {
 //    let onIncrement: () -> Void
 //    let onDecrement: () -> Void
 //    let onReset: () -> Void
-    let onShare: (() -> Void)?
+    let onShare: () -> Void
 
     var body: some View {
         Menu {
@@ -49,18 +49,16 @@ struct ActionsMenuView: View {
                 Label("Edit Spot", systemImage: "pencil")
             }
             
-            Button(role: .destructive) {
-                onDelete()
-            } label: {
-                Label("Delete Spot", systemImage: "trash")
+            Button { onShare() } label: {
+                Label("Share Spot", systemImage: "square.and.arrow.up")
             }
             
             Divider()
             
-            if let onShare {
-                Button { onShare() } label: {
-                    Label("Share Spot", systemImage: "square.and.arrow.up")
-                }
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("Delete Spot", systemImage: "trash")
             }
             
         } label: {
