@@ -147,7 +147,7 @@ struct SpotListView: View {
                     presenting: spotToDelete
                 ) { spot in
                     Button("Delete", role: .destructive) {
-                        spotsViewModel.deleteSpot(spot) { result in
+                        spotsViewModel.deleteSpot(spot, isPermanent: false) { result in
                             if case .failure(let error) = result {
                                 spotsViewModel.errorMessage = "Failed to delete: \(error.localizedDescription)"
                             }

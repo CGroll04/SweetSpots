@@ -67,6 +67,25 @@ struct SpotFormSectionView: View {
             }
         }
     }
+    private var distanceUnit: String {
+        // This checks if the user's region uses the metric system
+        if Locale.current.measurementSystem == .metric {
+            return "meters"
+        } else {
+            return "feet"
+        }
+    }
+    private var radiusPlaceholder: String {
+        if Locale.current.measurementSystem == .metric {
+            return "50-50000"
+        } else {
+            // Convert the meter range to feet for the placeholder
+            let minFeet = Measurement(value: 50, unit: UnitLength.meters).converted(to: .feet).value
+            let maxFeet = Measurement(value: 50000, unit: UnitLength.meters).converted(to: .feet).value
+            return "\(Int(minFeet.rounded()))-\(Int(maxFeet.rounded()))"
+        }
+    }
+
     
     // The content of the form, with all fields bound to the `formState`.
     @ViewBuilder
@@ -325,8 +344,8 @@ struct SpotFormSectionView: View {
 
             if formState.showingCustomRadiusTextField {
                 HStack {
-                    Text("Custom (meters):")
-                    TextField("50-50000", text: $formState.customRadiusText)
+                    Text("Custom (\(distanceUnit)):") // <-- Uses dynamic unit
+                    TextField(radiusPlaceholder, text: $formState.customRadiusText) // <-- Uses dynamic placeholder
                         .keyboardType(.numberPad).multilineTextAlignment(.trailing)
                         .focused($focusedField, equals: .customRadius)
                 }

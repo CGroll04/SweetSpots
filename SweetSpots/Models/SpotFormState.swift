@@ -28,6 +28,7 @@ class SpotFormState: ObservableObject, Identifiable {
     @Published var spotWebsiteURLInput: String = ""
     @Published var selectedCollectionIds: Set<String> = []
     @Published var spotNotes: String = ""
+    @Published var senderName: String = ""
     @Published var isFromShare: Bool = false
 
     // MARK: - Notification Setting Properties (Moved from AddSpotView)
@@ -72,6 +73,7 @@ class SpotFormState: ObservableObject, Identifiable {
         self.spotWebsiteURLInput = spot.websiteURL ?? ""
         self.selectedCollectionIds = Set(spot.collectionIds)
         self.spotNotes = spot.notes ?? ""
+        self.senderName = spot.senderName ?? ""
         self.wantsNearbyNotificationForThisSpot = spot.wantsNearbyNotification
 
         let validRadius = max(50.0, min(50000.0, spot.notificationRadiusMeters))
@@ -91,6 +93,7 @@ class SpotFormState: ObservableObject, Identifiable {
     init(payload: SharedSpotPayload) {
         self.spotName = payload.name
         self.spotAddress = payload.address
+        self.searchCompleterVM.queryFragment = payload.address
         self.spotCoordinates = CLLocationCoordinate2D(latitude: payload.latitude, longitude: payload.longitude)
         self.selectedCategory = SpotCategory(rawValue: payload.category) ?? .other
         self.spotPhoneNumber = payload.phoneNumber ?? ""
@@ -99,6 +102,7 @@ class SpotFormState: ObservableObject, Identifiable {
         self.spotNotes = payload.notes ?? ""
         self.spotSourceURLInput = payload.sourceURL ?? "Manually Added"
         self.isFromShare = true
+        self.senderName = payload.senderName ?? ""
         setupSearchCompleterSubscription()
     }
     
@@ -182,9 +186,15 @@ class SpotFormState: ObservableObject, Identifiable {
         let finalNotes = spotNotes.trimmedSafe().isEmpty ? nil : spotNotes.trimmedSafe()
         
         // Use the validated radius value
-        var finalRadius = self.notificationRadiusForThisSpot
+        var finalRadiusInMeters = self.notificationRadiusForThisSpot
         if selectedRadiusPreset == .custom, let customRadiusValue = Double(customRadiusText) {
-            finalRadius = customRadiusValue
+            // If the user's system is not metric, they entered feet. Convert to meters.
+            if Locale.current.measurementSystem != .metric {
+                finalRadiusInMeters = Measurement(value: customRadiusValue, unit: UnitLength.feet).converted(to: .meters).value
+            } else {
+                // Otherwise, they entered meters.
+                finalRadiusInMeters = customRadiusValue
+            }
         }
         
         return Spot(
@@ -200,8 +210,9 @@ class SpotFormState: ObservableObject, Identifiable {
             websiteURL: finalWebsiteURL,
             collectionIds: Array(self.selectedCollectionIds),
             wantsNearbyNotification: wantsNearbyNotificationForThisSpot,
-            notificationRadiusMeters: finalRadius,
-            notes: finalNotes
+            notificationRadiusMeters: finalRadiusInMeters,
+            notes: finalNotes,
+            senderName: self.senderName
         )
     }
 }

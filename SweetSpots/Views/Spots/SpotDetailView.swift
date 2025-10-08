@@ -63,6 +63,14 @@ struct SpotDetailView: View {
         }
         return nil
     }
+    private var distanceUnit: String {
+        // This checks if the user's region uses the metric system
+        if Locale.current.measurementSystem == .metric {
+            return "meters"
+        } else {
+            return "feet"
+        }
+    }
     
     // Local state for UI controls, initialized from the spot
     @State private var wantsNearbyNotification: Bool = false
@@ -73,6 +81,10 @@ struct SpotDetailView: View {
     @State private var spotToEdit: Spot? = nil
     @State private var spotToDelete: Spot? = nil
     @State private var showingDeleteConfirmation = false
+    @State private var showingWebSheet = false
+    
+    @State private var showingNavConflictAlert = false
+    @State private var newNavigationTarget: Spot?
     
     @State private var itemToShare: ShareableContent? = nil
     
@@ -96,7 +108,6 @@ struct SpotDetailView: View {
     var body: some View {
         if let currentSpot = spot {
             contentView(for: currentSpot)
-                .navigationTitle(currentSpot.name)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { toolbarContent(for: currentSpot) }
                 .alert(item: $alertInfo) { info in
@@ -161,7 +172,7 @@ struct SpotDetailView: View {
             presenting: spotToDelete
         ) { spot in
             Button("Delete", role: .destructive) {
-                spotsViewModel.deleteSpot(spot) { _ in
+                spotsViewModel.deleteSpot(spot, isPermanent: false) { _ in
                     self.dismiss()
                 }
             }
@@ -172,13 +183,17 @@ struct SpotDetailView: View {
         .sheet(item: $itemToShare) { item in
             ShareSheet(items: [item.text, item.url])
         }
-    }
-
-    // MARK: - Computed Properties
-    private func hasNotificationChanges(for spot: Spot) -> Bool {
-        if wantsNearbyNotification != spot.wantsNearbyNotification { return true }
-        if wantsNearbyNotification && !notificationRadius.isApproximately(spot.notificationRadiusMeters, tolerance: 0.1) { return true }
-        return false
+        .alert("Start New Route?", isPresented: $showingNavConflictAlert, presenting: newNavigationTarget) { spot in
+            Button("Switch Destination", role: .destructive) {
+                // Stop the old navigation and start the new one
+                navigationViewModel.stopNavigation()
+                // We re-call getDirections, which will now succeed
+                getDirections(for: spot)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { spot in
+            Text("You are already navigating. Do you want to end your current route and start a new one to \"\(spot.name)\"?")
+        }
     }
     
     // MARK: - Toolbar & Actions
@@ -190,49 +205,34 @@ struct SpotDetailView: View {
             }
         }
 
-        ToolbarItem(placement: .navigationBarTrailing) {
-            if hasNotificationChanges(for: spot) {
-                Button("Save") {
-                    saveNotificationSettings(for: spot)
+        ToolbarItemGroup(placement: .navigationBarTrailing) {
+            HStack(spacing: 8) { // Use an HStack for consistent spacing
+                // The Share Button
+                Button {
+                    Task { await handleShare(for: spot) }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
                 }
-                .disabled(isSavingChanges)
-                .fontWeight(.semibold)
-            } else if showSaveConfirmation {
-                Text("Saved!")
-                    .font(.caption)
-                    .foregroundStyle(Color.green)
-                    .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            showSaveConfirmation = false
-                        }
-                    }
-            }
-        }
+                .padding(.leading, 3)
 
-        ToolbarItem(placement: .navigationBarTrailing) {
-            Button {
-                Task {
-                    await handleShare(for: spot)
+                // The More menu
+                if spot.deletedAt == nil {
+                    Menu {
+                        Button { self.spotToEdit = spot } label: {
+                            Label("Edit Spot", systemImage: "pencil")
+                        }
+                        Button(role: .destructive) {
+                            self.spotToDelete = spot
+                            self.showingDeleteConfirmation = true
+                        } label: {
+                            Label("Delete Spot", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
                 }
-            } label: { Image(systemName: "square.and.arrow.up") }
-        }
-
-        if spot.deletedAt == nil {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                ActionsMenuView(
-                    spot: spot,
-                    onEdit: { self.spotToEdit = spot },
-                    onDelete: {
-                        self.spotToDelete = spot
-                        self.showingDeleteConfirmation = true
-                    },
-                    onShare: {
-                        Task {
-                            await handleShare(for: spot)
-                        }
-                    }
-                )
             }
+            .buttonStyle(.plain) // Removes unwanted background styles from buttons within
         }
     }
     
@@ -295,29 +295,58 @@ struct SpotDetailView: View {
     }
     
     private func webPreviewSection(url: URL) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        // Check if the URL is from a known problematic source like TikTok
+        let host = url.host?.lowercased() ?? ""
+        let isProblematicSource = host.contains("tiktok.com") || host.contains("youtube.com")
+        
+        return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Image(systemName: "play.tv.fill").font(.headline).foregroundStyle(Color.themePrimary)
+                Image(systemName: "safari.fill").font(.headline).foregroundStyle(Color.themePrimary)
                     .frame(width: 24, alignment: .center)
                 Text("Original Post Preview").font(.headline).foregroundStyle(Color.themeTextPrimary)
             }
             .padding(.top, 8)
-            ZStack {
-                WebView(
-                    webView: webViewStore.webView,
-                    request: URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad),
-                    isLoading: $webViewIsLoading,
-                    loadingError: $webViewError
-                )
-                .frame(height: 650)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.themeFieldBorder.opacity(0.4), lineWidth: 1))
-                
-                if webViewIsLoading { ProgressView().scaleEffect(1.2).tint(Color.themePrimary) }
-                else if let error = webViewError { webViewErrorContent(error: error, url: url) }
+            
+            if isProblematicSource {
+                // Show a button instead of the broken WebView
+                Button(action: {
+                    showingWebSheet = true
+                }) {
+                    HStack {
+                        Text("Tap to view post")
+                            .font(.headline)
+                        Spacer()
+                        Image(systemName: "arrow.up.right.square")
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Material.thin)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.themeFieldBorder.opacity(0.4), lineWidth: 1))
+                }
+            } else {
+                // For other sites like Instagram, the existing WebView still works
+                ZStack {
+                    WebView(
+                        webView: webViewStore.webView,
+                        request: URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad),
+                        isLoading: $webViewIsLoading,
+                        loadingError: $webViewError
+                    )
+                    .frame(height: 650)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.themeFieldBorder.opacity(0.4), lineWidth: 1))
+                    
+                    if webViewIsLoading { ProgressView().scaleEffect(1.2).tint(Color.themePrimary) }
+                    else if let error = webViewError { webViewErrorContent(error: error, url: url) }
+                }
             }
         }
         .padding(.bottom, 5)
+        // Add this sheet modifier to present the SafariView
+        .sheet(isPresented: $showingWebSheet) {
+            SafariView(url: url)
+        }
     }
     
     private func webViewErrorContent(error: Error, url: URL) -> some View {
@@ -334,6 +363,9 @@ struct SpotDetailView: View {
 
     private func informationSection(for spot: Spot) -> some View {
         VStack(alignment: .leading, spacing: 16) {
+            if let sender = spot.senderName {
+                DetailRow(iconName: "square.and.arrow.down.fill", title: "Imported From", content: sender)
+            }
             DetailRow(iconName: "mappin.and.ellipse", title: "Address", content: spot.address)
             DetailRow(iconName: spot.category.systemImageName, title: "Category", content: spot.category.displayName, contentColor: Color.themePrimary)
             if !spot.collectionIds.isEmpty {
@@ -395,10 +427,13 @@ struct SpotDetailView: View {
                 Toggle("Notify me when nearby", isOn: $wantsNearbyNotification)
                     .tint(Color.themePrimary)
                     .disabled(!globalGeofencingSystemEnabled || isSavingChanges)
-                    .onChange(of: wantsNearbyNotification) { _, isNowEnabled in
-                        if isNowEnabled {
+                    .onChange(of: wantsNearbyNotification) {
+                        // This now saves automatically
+                        saveNotificationSettings(for: spot)
+                        
+                        // The permission check logic remains
+                        if wantsNearbyNotification {
                             if locationManager.authorizationStatus != .authorizedAlways {
-                                logger.info("Notification enabled, but 'Always' permission is missing. Requesting upgrade.")
                                 locationManager.requestLocationAuthorization(aimForAlways: true)
                             }
                         }
@@ -412,14 +447,19 @@ struct SpotDetailView: View {
                         if let presetRadius = newPreset.radiusValue {
                             notificationRadius = presetRadius; showingCustomRadiusField = false
                         } else { showingCustomRadiusField = true }
+                        saveNotificationSettings(for: spot)
                     }
                     if showingCustomRadiusField {
                         HStack {
-                            Text("Custom (meters):")
+                            Text("Custom (\(distanceUnit)):")
                             Spacer()
-                            TextField("e.g., 150", value: $notificationRadius, formatter: NumberFormatters.distance)
+                            TextField("e.g., 650", value: $notificationRadius, formatter: NumberFormatters.distance)
                                 .keyboardType(.decimalPad).multilineTextAlignment(.trailing)
                                 .frame(width: 100).textFieldStyle(.roundedBorder).disabled(isSavingChanges)
+                                .onChange(of: notificationRadius) {
+                                    // Save when the custom radius changes
+                                    saveNotificationSettings(for: spot)
+                                }
                         }
                     }
                     Text(globalGeofencingSystemEnabled ? "Min: 50m, Max: 50,000m." : "Enable global proximity alerts in Settings first.")
@@ -474,10 +514,19 @@ struct SpotDetailView: View {
     }
     
     // MARK: - Action Methods
-    
+
     private func getDirections(for spot: Spot) {
+        // 1. Check if navigation is already active
+        if navigationViewModel.isNavigating {
+            // If yes, store the new spot and trigger the alert
+            self.newNavigationTarget = spot
+            self.showingNavConflictAlert = true
+            return
+        }
+        
+        // 2. If not navigating, proceed as normal
         guard let userLocation = locationManager.userLocation else {
-            logger.info("User requested directions but location is unavailable. Prompting for location update.")
+            logger.info("User requested directions but location is unavailable.")
             locationManager.startUpdatingUserLocation()
             alertInfo = SpotDetailAlertInfo(title: "Finding Your Location", message: "Please wait a moment while we find your current location, then try again.")
             return
@@ -490,13 +539,21 @@ struct SpotDetailView: View {
         Task {
             await navigationViewModel.setNavigationTarget(spot: spot, from: userLocation)
         }
-        
     }
     
     private func saveNotificationSettings(for spot: Spot) {
         if wantsNearbyNotification && (notificationRadius < 50 || notificationRadius > 50000) {
-            logger.debug("Save notification settings failed: invalid radius provided.")
-            alertInfo = SpotDetailAlertInfo(title: "Invalid Radius", message: "Radius must be between 50 and 50,000 meters.")
+            // Use a formatter to create a localized message
+            let formatter = MeasurementFormatter()
+            formatter.unitOptions = .providedUnit
+            formatter.numberFormatter.maximumFractionDigits = 0
+
+            let minDistance = Measurement(value: 50, unit: UnitLength.meters)
+            let maxDistance = Measurement(value: 50000, unit: UnitLength.meters)
+
+            let message = "Radius must be between \(formatter.string(from: minDistance)) and \(formatter.string(from: maxDistance))."
+            
+            alertInfo = SpotDetailAlertInfo(title: "Invalid Radius", message: message)
             return
         }
         isSavingChanges = true

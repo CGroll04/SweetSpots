@@ -88,6 +88,13 @@ struct CollectionCardView: View {
                         .fontWeight(.medium)
                         .opacity(0.8)
                     
+                    if let sender = collection.senderName {
+                        Label(sender, systemImage: "square.and.arrow.down")
+                            .font(.caption)
+                            .opacity(0.8)
+                            .lineLimit(1)
+                    }
+                    
                     // 5. Category Icons
                     categoryIcons
                         .padding(.top, 2)

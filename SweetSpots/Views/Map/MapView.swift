@@ -24,6 +24,7 @@ struct MapView: View {
     @State private var showingSettingsSheet = false
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var viewingRegion: MKCoordinateRegion? = nil
+    @State private var showingPermissionAlert = false
     
     @State private var selectedSpotIdForSheet: String? = nil
     @State private var selectedSpot: Spot? = nil
@@ -307,25 +308,18 @@ struct MapView: View {
     
     private func geofenceStatusOverlay() -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: "location.circle.fill")
-                    .foregroundColor(.blue)
-                    .font(.caption)
-                
-                Text("\(spotsWithGeofences.count) Active Alert\(spotsWithGeofences.count == 1 ? "" : "s")")
-                    .font(.caption)
-                    .fontWeight(.medium)
-            }
             
             if locationManager.authorizationStatus != .authorizedAlways {
-                HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                        .font(.caption2)
-                    
-                    Text("Need Always Permission")
-                        .font(.caption2)
-                        .foregroundColor(.orange)
+                // This HStack is now a Button
+                Button(action: {
+                    showingPermissionAlert = true
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text("Need Always Permission")
+                    }
+                    .font(.caption2)
+                    .foregroundColor(.orange)
                 }
             }
         }
@@ -334,6 +328,17 @@ struct MapView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .padding(.leading, 16)
         .padding(.top, 16)
+        .alert("Proximity Alerts Disabled", isPresented: $showingPermissionAlert) {
+            Button("Open Settings") {
+                // This deep links the user directly to your app's settings
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("To get notifications when you're near a spot, SweetSpots needs 'Always' location access. Your location data is never stored or shared.")
+        }
     }
     
     // MARK: - Filter Menu (Enhanced)

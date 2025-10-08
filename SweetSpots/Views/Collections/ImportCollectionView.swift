@@ -52,8 +52,8 @@ struct ImportCollectionView: View {
                 List($importableSpots) { $spot in
                     SpotImportRow(importableSpot: $spot)
                         .onTapGesture {
-                            // If the spot is a conflict, set it as the one to resolve
-                            if case .conflict = spot.state {
+                            // Allow the sheet to open if there is an existing spot (i.e., it's a conflict)
+                            if spot.existingSpot != nil {
                                 self.spotToResolve = spot
                             }
                         }
@@ -104,18 +104,17 @@ struct ImportCollectionView: View {
                 }
             }
             .onAppear {
-                // Pre-scan for duplicates when the view appears
                 self.importableSpots = payload.spots.map { spotPayload in
-                    // Find a spot in the user's library with the same name and address
+                    let normalizedPayloadAddress = normalize(address: spotPayload.address)
+                    
                     if let existingSpot = spotsViewModel.spots.first(where: {
-                        $0.name.lowercased() == spotPayload.name.lowercased() &&
-                        $0.address.lowercased() == spotPayload.address.lowercased()
+                        normalize(address: $0.address) == normalizedPayloadAddress
                     }) {
-                        // If found, mark it as a conflict
-                        return ImportableSpot(payload: spotPayload, state: .conflict(existingSpot: existingSpot))
+                        // Now we pass the existing spot into the main struct
+                        return ImportableSpot(payload: spotPayload, state: .conflict(existingSpot: existingSpot), existingSpot: existingSpot)
                     } else {
-                        // Otherwise, it's a new spot
-                        return ImportableSpot(payload: spotPayload, state: .new)
+                        // For new spots, existingSpot is nil
+                        return ImportableSpot(payload: spotPayload, state: .new, existingSpot: nil)
                     }
                 }
             }
@@ -140,14 +139,16 @@ struct ImportCollectionView: View {
             return false
         }
     }
+    
     private var spotsToImportCount: Int {
         importableSpots.filter { spot in
             switch spot.state {
-            case .new, .resolved(.saveAsDuplicate), .resolved(.updateWithImported):
-                // These states result in a spot being saved
+            // A spot is "imported" if it's new or replaces an old one.
+            case .new, .resolved(.replaceSpot):
                 return true
-            case .conflict, .resolved(.keepOriginal):
-                // These states do not
+            
+            // Appending notes or keeping the original does not create a new spot.
+            case .conflict, .resolved(.keepOriginal), .resolved(.appendNotes):
                 return false
             }
         }.count
@@ -180,57 +181,61 @@ struct ImportCollectionView: View {
             let newCollectionId = try await collectionViewModel.addCollection(
                 name: collectionName,
                 emoji: payload.emoji,
+                senderName: payload.senderName,
                 userId: userId,
                 description: payload.collectionDescription
             )
 
             var spotsToCreate: [Spot] = []
             var spotsToUpdate: [Spot] = []
+            var spotsToDelete: [Spot] = []
 
             for item in importableSpots {
                 switch item.state {
-                case .new, .resolved(.saveAsDuplicate):
-                    // Create a new spot
-                    let newSpot = Spot(userId: userId, from: item.payload, collectionIds: [newCollectionId])
-                    spotsToCreate.append(newSpot)
+                case .new:
+                    spotsToCreate.append(Spot(userId: userId, from: item.payload, collectionIds: [newCollectionId]))
 
-                case .resolved(.updateWithImported):
+                case .resolved(.keepOriginal):
                     // Find the existing spot and update it with the new data
-                    if let existingSpot = spotsViewModel.spots.first(where: {
-                        $0.name.lowercased() == item.payload.name.lowercased() &&
-                        $0.address.lowercased() == item.payload.address.lowercased()
-                    }) {
-                        var updatedSpot = existingSpot
-                        updatedSpot.update(from: item.payload, newCollectionId: newCollectionId)
-                        spotsToUpdate.append(updatedSpot)
+                    if item.addExistingToCollection, let existing = item.existingSpot {
+                        var spotToUpdate = existing
+                        spotToUpdate.collectionIds.append(newCollectionId)
+                        spotsToUpdate.append(spotToUpdate)
                     }
 
-                case .conflict, .resolved(.keepOriginal):
-                    // Do nothing for unresolved conflicts or if user chose to keep their original
+                case .resolved(.appendNotes):
+                    if let existing = item.existingSpot {
+                        var spotToUpdate = existing
+                        let newNotes = (existing.notes ?? "") + "\n\n--- Imported Notes ---\n" + (item.payload.notes ?? "")
+                        spotToUpdate.notes = newNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if item.addExistingToCollection {
+                            spotToUpdate.collectionIds.append(newCollectionId)
+                        }
+                        spotsToUpdate.append(spotToUpdate)
+                    }
+                case .resolved(.replaceSpot):
+                    if let existing = item.existingSpot {
+                        spotsToDelete.append(existing)
+                        spotsToCreate.append(Spot(userId: userId, from: item.payload, collectionIds: [newCollectionId]))
+                    }
+                case .conflict: // This case shouldn't be possible if all conflicts are resolved
                     break
                 }
             }
 
             // Perform the batch operations
-            spotsViewModel.addMultipleSpots(spotsToCreate) { result in
-                if case .failure(let error) = result {
-                    self.logger.error("Failed to batch-create imported spots: \(error.localizedDescription)")
-                }
-            }
-            for spot in spotsToUpdate {
-                spotsViewModel.updateSpot(spot) { result in
-                    if case .failure(let error) = result {
-                        self.logger.error("Failed to update spot '\(spot.name)' during import: \(error.localizedDescription)")
-                    }
-                }
-            }
-
-            logger.info("Successfully imported collection '\(collectionName)' with \(spotsToCreate.count) new spots and \(spotsToUpdate.count) updated spots.")
+            if !spotsToCreate.isEmpty { spotsViewModel.addMultipleSpots(spotsToCreate) { _ in } }
+            if !spotsToUpdate.isEmpty { spotsToUpdate.forEach { spotsViewModel.updateSpot($0) { _ in } } }
+            if !spotsToDelete.isEmpty { spotsToDelete.forEach { spotsViewModel.deleteSpot($0, isPermanent: true) { _ in } } } // Assuming soft delete
+            
             isPresented = false
         } catch {
             logger.error("Error creating new collection '(collectionName)': (error.localizedDescription)")
             isSaving = false
         }
+    }
+    private func normalize(address: String) -> String {
+        return address.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

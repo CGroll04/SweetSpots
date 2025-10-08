@@ -169,8 +169,8 @@ struct MainTabView: View {
         case .sharedURLAddSpot(let url):
             AddSpotView(isPresented: sheetBinding(), spotToEdit: nil, prefilledPayload: nil, prefilledURL: url)
         case .sharedPayloadAddSpot(let payload):
-            let contextualURL = URL(string: payload.websiteURL ?? payload.sourceURL ?? "")
-            AddSpotView(isPresented: sheetBinding(), spotToEdit: nil, prefilledPayload: payload, prefilledURL: contextualURL)
+            let contextualURL = URL(string: payload.sourceURL ?? payload.websiteURL ?? "")
+                AddSpotView(isPresented: sheetBinding(), spotToEdit: nil, prefilledPayload: payload, prefilledURL: contextualURL)
         case .sharedCollection(let payload):
             ImportCollectionView(isPresented: sheetBinding(), payload: payload)
         case .spotDetail(let spot):

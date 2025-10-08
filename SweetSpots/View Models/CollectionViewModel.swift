@@ -131,7 +131,7 @@ class CollectionViewModel: ObservableObject {
     }
 
     /// Adds a new collection for the specified user.
-    func addCollection(name: String, emoji: String?, userId: String, description: String? = nil) async throws -> String {
+    func addCollection(name: String, emoji: String?, senderName: String?, userId: String, description: String? = nil) async throws -> String {
         guard let trimmedName = name.trimmed() else {
             throw CollectionError.emptyName
         }
@@ -141,7 +141,7 @@ class CollectionViewModel: ObservableObject {
         }
 
         let finalDescription = description?.trimmed()
-        var newCollection = SpotCollection(userId: userId, name: trimmedName, descriptionText: finalDescription, emoji: emoji)
+        var newCollection = SpotCollection(userId: userId, name: trimmedName, descriptionText: finalDescription, emoji: emoji, senderName: senderName)
         
         do {
             let documentReference = try await userCollectionsRef(userId: userId).addDocument(from: newCollection)

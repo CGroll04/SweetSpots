@@ -346,20 +346,36 @@ class SpotViewModel: ObservableObject {
     }
 
     /// Soft-deletes a spot by setting its `deletedAt` timestamp.
-    func deleteSpot(_ spotToDelete: Spot, completion: @escaping (Result<Void, Error>) -> Void) {
+    func deleteSpot(_ spotToDelete: Spot, isPermanent: Bool, completion: @escaping (Result<Void, Error>) -> Void) {
         guard let spotId = spotToDelete.id else {
             completion(.failure(SpotError.missingSpotID))
             return
         }
         
-        let updateData = ["deletedAt": Timestamp(date: Date())]
-        userSpotsCollection(userId: spotToDelete.userId).document(spotId).updateData(updateData) { error in
+        let docRef = userSpotsCollection(userId: spotToDelete.userId).document(spotId)
+        
+        let action: (WriteBatch) -> Void
+        let logMessage: String
+        
+        if isPermanent {
+            action = { batch in batch.deleteDocument(docRef) }
+            logMessage = "Permanently deleting spot"
+        } else {
+            action = { batch in batch.updateData(["deletedAt": Timestamp(date: Date())], forDocument: docRef) }
+            logMessage = "Soft-deleting spot"
+        }
+        
+        logger.info("\(logMessage) '\(spotToDelete.name)'.")
+        
+        let batch = db.batch()
+        action(batch)
+        batch.commit { error in
             Task { @MainActor in
                 if let error = error {
-                    self.logger.error("Failed to soft-delete spot '\(spotToDelete.name)': \(error.localizedDescription)")
+                    self.logger.error("Failed to delete spot: \(error.localizedDescription)")
                     completion(.failure(error))
                 } else {
-                    self.logger.info("Successfully soft-deleted spot '\(spotToDelete.name)'.")
+                    self.logger.info("Successfully deleted spot.")
                     completion(.success(()))
                 }
             }

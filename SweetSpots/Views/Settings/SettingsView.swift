@@ -25,6 +25,8 @@ struct SettingsView: View {
     @State private var alertInfo: AlertInfo? = nil
     @State private var showingBulkAlertConfirmation: BulkAlertActionType? = nil
     @State private var isProcessingBulkUpdate: Bool = false
+    @State private var showTutorialFromSettings = false
+    @State private var showingPermissionAlert = false
     
     @State private var isTrashExpanded: Bool = false
     @State private var spotToShowDetails: Spot? = nil
@@ -55,6 +57,12 @@ struct SettingsView: View {
                 aboutSection()
                 recentlyDeletedSection()
                 accountActionsSection()
+            }
+            .sheet(isPresented: $showTutorialFromSettings) {
+                TutorialView {
+                    // This is the dismiss action for the tutorial
+                    showTutorialFromSettings = false
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.large)
@@ -138,23 +146,49 @@ struct SettingsView: View {
     @ViewBuilder
     private func currentPermissionStatusView() -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Image(systemName: "location.fill")
-                    .foregroundColor(locationPermissionColor)
-                Text("Location: \(locationPermissionText)")
-                    .font(.caption)
-                    .foregroundColor(locationPermissionColor)
+            // This logic now checks the status to decide if it should be a button
+            if locationManager.authorizationStatus == .authorizedWhenInUse {
+                Button(action: {
+                    showingPermissionAlert = true
+                }) {
+                    HStack {
+                        Image(systemName: "location.fill")
+                            .foregroundColor(locationPermissionColor)
+                        Text("Location: \(locationPermissionText)")
+                            .font(.caption)
+                            .foregroundColor(locationPermissionColor)
+                    }
+                }
+            } else {
+                // For all other statuses, it remains plain text
+                HStack {
+                    Image(systemName: "location.fill")
+                        .foregroundColor(locationPermissionColor)
+                    Text("Location: \(locationPermissionText)")
+                        .font(.caption)
+                        .foregroundColor(locationPermissionColor)
+                }
             }
             
             HStack {
                 Image(systemName: "bell.fill")
-                    .foregroundColor(.secondary)
-                Text("Notifications: Check in Settings")
+                    .foregroundColor(notificationPermissionColor)
+                Text("Notifications: \(notificationPermissionText)")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(notificationPermissionColor)
             }
         }
         .padding(.vertical, 4)
+        .alert("Proximity Alerts Disabled", isPresented: $showingPermissionAlert) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("To get notifications when you're near a spot, SweetSpots needs 'Always' location access. Your location data is never stored or shared.")
+        }
     }
     
     private var locationPermissionText: String {
@@ -175,6 +209,27 @@ struct SettingsView: View {
         case .denied, .restricted: return .red
         case .notDetermined: return .blue
         @unknown default: return .gray
+        }
+    }
+    
+    
+    private var notificationPermissionText: String {
+        switch locationManager.notificationStatus {
+        case .authorized: return "Allowed"
+        case .denied: return "Denied"
+        case .notDetermined: return "Not Set"
+        case .provisional: return "Provisional"
+        case .ephemeral: return "Ephemeral"
+        @unknown default: return "Unknown"
+        }
+    }
+
+    private var notificationPermissionColor: Color {
+        switch locationManager.notificationStatus {
+        case .authorized: return .green
+        case .denied: return .red
+        case .notDetermined: return .blue
+        default: return .gray
         }
     }
     
@@ -260,6 +315,10 @@ struct SettingsView: View {
     private func aboutSection() -> some View {
         Section(header: Text("About")) {
             LabeledContent("App Version", value: currentAppVersion())
+            
+            Button("View Tutorial") {
+                showTutorialFromSettings = true
+            }
         }
     }
 

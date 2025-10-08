@@ -10,6 +10,10 @@ import FirebaseAuth
 import FirebaseFirestore
 import os.log
 
+enum AuthContext {
+    case signIn, passwordChange
+}
+
 @MainActor
 /// Manages all user authentication flows, including sign in, sign up, password management, and session state.
 class AuthViewModel: ObservableObject {
@@ -338,23 +342,23 @@ class AuthViewModel: ObservableObject {
         errorMessage = nil
         successMessage = nil
 
-        guard let trimmedCurrentPassword = currentPassword.trimmed() else {
-            self.errorMessage = "Please enter your current password."
-            isLoading = false
-            return
-        }
-
-        let credential = EmailAuthProvider.credential(withEmail: userEmail, password: trimmedCurrentPassword)
+        let credential = EmailAuthProvider.credential(withEmail: userEmail, password: currentPassword)
         
         do {
             try await user.reauthenticate(with: credential)
+            guard currentPassword != newPassword else {
+                self.errorMessage = "Your new password cannot be the same as your current password."
+                self.isLoading = false
+                return
+            }
+            
             try await user.updatePassword(to: newPassword)
             
             self.successMessage = "Password updated successfully."
             clearPasswordFields()
         } catch {
             logger.error("Failed to update password: \(error.localizedDescription)")
-            self.errorMessage = mapAuthError(error)
+            self.errorMessage = mapAuthError(error, context: .passwordChange)
         }
         isLoading = false
     }
@@ -420,23 +424,24 @@ class AuthViewModel: ObservableObject {
         return true
     }
 
+    
     private func validatePasswordChangeInputs(newPassword: String, newPasswordConfirmation: String) -> Bool {
-        guard currentPassword.trimmed() != nil else {
-            errorMessage = "Please enter your current password."
+        guard !currentPassword.isEmpty else { // Use isEmpty for clarity
+            errorMessage = "Please enter your current password to continue."
             return false
         }
-        guard !newPassword.isEmpty else {
-            errorMessage = "Please enter a new password."
+
+        let allRequirementsMet = PasswordRequirement.allCases.allSatisfy { $0.isMet(for: newPassword) }
+        guard allRequirementsMet else {
+            errorMessage = "Your new password does not meet all the requirements."
             return false
         }
-        guard newPassword.count >= minPasswordLength else {
-            errorMessage = "New password must be at least \(minPasswordLength) characters long."
-            return false
-        }
+        
         guard newPassword == newPasswordConfirmation else {
-            errorMessage = "New passwords do not match."
+            errorMessage = "The new passwords do not match."
             return false
         }
+        
         return true
     }
 
@@ -470,7 +475,7 @@ class AuthViewModel: ObservableObject {
     }
 
     // MARK: - Error Mapping
-    private func mapAuthError(_ error: Error) -> String {
+    private func mapAuthError(_ error: Error, context: AuthContext = .signIn) -> String {
         logger.error("Mapping auth error: \(error.localizedDescription) | Domain: \((error as NSError).domain), Code: \((error as NSError).code)")
         var friendlyMessage = "Sorry, we couldn't complete this action. Please check your connection and try again."
         let nsError = error as NSError
@@ -478,16 +483,20 @@ class AuthViewModel: ObservableObject {
         if nsError.domain == AuthErrorDomain {
             if let errorCode = AuthErrorCode(rawValue: nsError.code) {
                 switch errorCode {
-                case .invalidCredential:
-                    friendlyMessage = "The information you provided is invalid. Please check your email and password."
+                case .invalidCredential, .wrongPassword:
+                   // If we're changing a password, the error is the current password.
+                   if context == .passwordChange {
+                       return "The current password you entered is incorrect."
+                   } else {
+                       // Otherwise, it's the standard login error.
+                       return "Incorrect email or password. Please try again."
+                   }
                 case .invalidEmail:
                     friendlyMessage = "The email address is badly formatted. Please check and try again."
                 case .emailAlreadyInUse:
                     friendlyMessage = "This email address is already in use."
                 case .weakPassword:
                     friendlyMessage = "Password must be at least \(minPasswordLength) characters."
-                case .wrongPassword:
-                    friendlyMessage = "Incorrect email or password. Please try again."
                 case .userNotFound:
                     friendlyMessage = "No account found with this email. Would you like to sign up?"
                 case .userDisabled:

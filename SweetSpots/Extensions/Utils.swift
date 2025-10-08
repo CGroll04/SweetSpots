@@ -84,27 +84,15 @@ extension Double {
     
     /// Formats a distance in meters to a human-readable string
     func formattedAsDistance() -> String {
-        let formatter = LengthFormatter()
+        // Create a Measurement object from the Double, assuming it's in meters
+        let measurement = Measurement(value: self, unit: UnitLength.meters)
+        
+        // Use MeasurementFormatter to handle all the logic
+        let formatter = MeasurementFormatter()
+        formatter.unitOptions = .naturalScale // Automatically chooses mi/ft or km/m
         formatter.numberFormatter.maximumFractionDigits = 1
         
-        if Locale.current.measurementSystem == .us {
-            let distanceInFeet = self * 3.28084
-            if distanceInFeet < 528 {
-                formatter.numberFormatter.maximumFractionDigits = 0
-                return formatter.string(fromValue: distanceInFeet, unit: .foot)
-            } else {
-                let distanceInMiles = self / 1609.34
-                return formatter.string(fromValue: distanceInMiles, unit: .mile)
-            }
-        } else {
-            if self < 100 {
-                formatter.numberFormatter.maximumFractionDigits = 0
-                return formatter.string(fromValue: self, unit: .meter)
-            } else {
-                let distanceInKilometers = self / 1000
-                return formatter.string(fromValue: distanceInKilometers, unit: .kilometer)
-            }
-        }
+        return formatter.string(from: measurement)
     }
 }
 

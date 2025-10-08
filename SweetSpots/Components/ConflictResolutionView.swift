@@ -5,99 +5,69 @@
 //  Created by Charlie Groll on 2025-09-04.
 //
 
+
 import SwiftUI
 
-/// A view that allows the user to resolve a conflict when importing a spot that already exists.
-///
-/// The user's choice is communicated back to the parent view via the `importableSpot` binding.
 struct ConflictResolutionView: View {
     @Binding var importableSpot: ImportableSpot
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedChoice: ResolutionChoice
+    @State private var addExistingToCollection: Bool
+    
+    init(importableSpot: Binding<ImportableSpot>) {
+        self._importableSpot = importableSpot
+        
+        // Set the initial choice based on the spot's current state
+        if case .resolved(let choice) = importableSpot.wrappedValue.state {
+            self._selectedChoice = State(initialValue: choice)
+        } else {
+            self._selectedChoice = State(initialValue: .keepOriginal) // Default choice
+        }
+        // Set the initial toggle state
+        self._addExistingToCollection = State(initialValue: importableSpot.wrappedValue.addExistingToCollection)
+    }
 
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text("Resolve Conflict")
-                        .font(.largeTitle).fontWeight(.bold)
+            Form {
+                if let existingSpot = importableSpot.existingSpot {
+                    Section("Conflict Detected") {
+                        Text("You already have a spot at this address named '\(existingSpot.name)'.")
+                    }
                     
-                    Text("You already have a spot named **\(importableSpot.payload.name)**. How would you like to proceed?")
-                    
-                    Divider()
-                    
-                    // Display existing and imported data side-by-side
-                    VStack(alignment: .leading) {
-                        Text("Your Existing Spot").font(.headline)
-                        if case .conflict(let existingSpot) = importableSpot.state {
-                            Text("Notes: \(existingSpot.notes ?? "None")")
-                                .font(.subheadline).foregroundStyle(.secondary)
+                    Section("How would you like to resolve this?") {
+                        Picker("Action", selection: $selectedChoice) { // Bind to local state
+                            // You can add .allCases to ResolutionChoice to generate this automatically
+                            Text(ResolutionChoice.keepOriginal.rawValue).tag(ResolutionChoice.keepOriginal)
+                            Text(ResolutionChoice.appendNotes.rawValue).tag(ResolutionChoice.appendNotes)
+                            Text(ResolutionChoice.replaceSpot.rawValue).tag(ResolutionChoice.replaceSpot)
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                        
+                        if canAddToCollection() {
+                            Toggle("Add my existing spot to this new collection", isOn: $addExistingToCollection)
+                                .animation(.default, value: canAddToCollection())
                         }
                     }
-                    
-                    VStack(alignment: .leading) {
-                        Text("New Imported Spot").font(.headline)
-                        Text("Notes: \(importableSpot.payload.notes ?? "None")")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                    }
-
-                    Divider()
-
-                    // Action Buttons
-                    VStack(spacing: 12) {
-                        resolveButton(
-                            title: "Keep My Original Spot",
-                            subtitle: "The imported spot will be ignored.",
-                            icon: "shield.fill",
-                            resolution: .keepOriginal
-                        )
-                        
-                        resolveButton(
-                            title: "Update My Spot",
-                            subtitle: "Your existing spot will be updated with the imported notes and info.",
-                            icon: "arrow.triangle.2.circlepath.circle.fill",
-                            resolution: .updateWithImported
-                        )
-                        
-                        resolveButton(
-                            title: "Save as a New Duplicate",
-                            subtitle: "A second copy of this spot will be added to your list.",
-                            icon: "plus.square.on.square.fill",
-                            resolution: .saveAsDuplicate
-                        )
-                    }
                 }
-                .padding()
             }
+            .navigationTitle("Resolve Conflict")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                ToolbarItem(placement: .confirmationAction) {
+                    // The "Done" button now saves the local state back to the binding
+                    Button("Done") {
+                        importableSpot.state = .resolved(choice: selectedChoice)
+                        importableSpot.addExistingToCollection = addExistingToCollection
+                        dismiss()
+                    }
                 }
             }
         }
     }
     
-    /// A helper view builder for creating the styled resolution choice buttons.
-    private func resolveButton(title: String, subtitle: String, icon: String, resolution: ConflictResolution) -> some View {
-        Button(action: {
-            importableSpot.state = .resolved(resolution: resolution)
-            dismiss()
-        }) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.title2)
-                    .frame(width: 40)
-                VStack(alignment: .leading) {
-                    Text(title).fontWeight(.semibold)
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            .padding()
-            .frame(maxWidth: .infinity)
-            .background(.thinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-        }
-        .buttonStyle(.plain)
+    private func canAddToCollection() -> Bool {
+        return selectedChoice == .keepOriginal || selectedChoice == .appendNotes
     }
 }

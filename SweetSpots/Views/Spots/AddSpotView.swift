@@ -30,6 +30,7 @@ struct AddSpotView: View {
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
     
     @StateObject private var webViewStore = WebViewStore()
+    @State private var showingWebSheet = false
     
     private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "SpotViewModel")
 
@@ -47,6 +48,16 @@ struct AddSpotView: View {
         if prefilledPayload != nil { return .addFromPayload }
         if prefilledURL != nil { return .addFromShare }
         return .addNewManual
+    }
+    
+    private var sourceURLForPreview: URL? {
+        if let url = prefilledURL {
+            return url // For .addFromShare mode
+        }
+        if let payload = prefilledPayload, let urlString = payload.sourceURL {
+            return URL(string: urlString) // For .addFromPayload mode
+        }
+        return nil
     }
     
     /// The main view now only manages an array of form state objects.
@@ -91,19 +102,45 @@ struct AddSpotView: View {
                     .layoutPriority(1)
                 
                 // WebView for context
-                if (mode == .addFromShare || mode == .addFromPayload), let url = prefilledURL {
-                    WebView(
-                        webView: webViewStore.webView,
-                        request: URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad),
-                        isLoading: $webViewIsLoading,
-                        loadingError: $webViewError
-                    )
-                    .frame(height: showWebView ? 300 : 0)
+                if mode == .addFromShare, let url = prefilledURL{
+                    // Check if the URL is from a known problematic source like TikTok
+                    let host = url.host?.lowercased() ?? ""
+                    let isProblematicSource = host.contains("tiktok.com") || host.contains("youtube.com")
+                    
+                    // This container holds the web preview or the button
+                    VStack {
+                        if isProblematicSource {
+                            // Show a button for TikTok instead of the broken WebView
+                            Button(action: {
+                                showingWebSheet = true
+                            }) {
+                                HStack {
+                                    Text("Tap to view post")
+                                        .font(.headline)
+                                    Spacer()
+                                    Image(systemName: "arrow.up.right.square")
+                                }
+                                .padding()
+                                .frame(maxWidth: .infinity)
+                                .background(Material.regular)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
+                            .padding()
+                        } else {
+                            // For other sites like Instagram, the existing WebView still works
+                            WebView(
+                                webView: webViewStore.webView,
+                                request: URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad),
+                                isLoading: $webViewIsLoading,
+                                loadingError: $webViewError
+                            )
+                        }
+                    }
+                    .frame(height: showWebView ? (isProblematicSource ? 100 : 300) : 0)
                     .opacity(showWebView ? 1 : 0)
                     .animation(.easeInOut(duration: 0.3), value: showWebView)
                 }
             }
-            // --- MODIFIERS MOVED HERE ---
             // Apply modifiers to the content INSIDE the NavigationStack
             .navigationTitle(navigationTitleString)
             .navigationBarTitleDisplayMode(.inline)
@@ -118,6 +155,11 @@ struct AddSpotView: View {
                 self.alertInfo = nil; info.onDismiss?()
             })
         }
+        .sheet(isPresented: $showingWebSheet) {
+            if let url = prefilledURL {
+                SafariView(url: url)
+            }
+        }
         .onAppear(perform: setupView)
         .environmentObject(collectionViewModel)
     }
@@ -127,6 +169,16 @@ struct AddSpotView: View {
     /// The main form container, now dynamically building sections from the `spotForms` array.
     private func formContentContainer() -> some View {
         Form {
+            if let senderName = viewModel.spotForms.first?.senderName, !senderName.isEmpty {
+                Section {
+                    HStack(spacing: 8) {
+                        Image(systemName: "person.crop.circle.fill")
+                        Text("Shared by \(senderName)")
+                    }
+                    .foregroundStyle(.secondary)
+                }
+            }
+            
             ForEach(viewModel.spotForms) { formState in
                 SpotFormSectionView(
                     formState: formState, // Pass the object directly
@@ -230,7 +282,7 @@ struct AddSpotView: View {
             Button("Cancel") { isPresented = false }.tint(Color.themeAccent)
         }
 
-        if mode == .addFromShare || mode == .addFromPayload {
+        if mode == .addFromShare && prefilledURL != nil {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { withAnimation { showWebView.toggle() } } label: {
                     HStack(spacing: 4) {
@@ -324,6 +376,18 @@ struct AddSpotView: View {
         guard let userId = authViewModel.userSession?.uid else {
             presentAlert(title: "Not Logged In", message: "You must be signed in to save spots.")
             return
+        }
+        
+        if mode != .edit {
+            for form in viewModel.spotForms {
+                let normalizedAddress = form.spotAddress.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                if spotsViewModel.spots.contains(where: {
+                    $0.address.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) == normalizedAddress
+                }) {
+                    presentAlert(title: "Duplicate Spot", message: "A spot with the address '\(form.spotAddress)' already exists in your library.")
+                    return // Stop the save process
+                }
+            }
         }
         
         isProcessing = true

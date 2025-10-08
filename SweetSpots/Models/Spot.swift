@@ -20,6 +20,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
     var sourceURL: String?
     var category: SpotCategory
     var notes: String?
+    var senderName: String?
     
     @ServerTimestamp var createdAt: Timestamp?
 
@@ -85,6 +86,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
             case collectionIds
             case notes
 //            case visitCount
+            case senderName
             case deletedAt
         }
 
@@ -104,6 +106,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         notificationRadiusMeters: Double = 200.0,
         notes: String? = nil,
 //        visitCount: Int = 0,
+        senderName: String? = nil,
         deletedAt: Timestamp? = nil
     ) {
         self.id = id
@@ -119,6 +122,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         self.collectionIds = collectionIds
         self.wantsNearbyNotification = wantsNearbyNotification
         self.notes = notes
+        self.senderName = senderName
         self.deletedAt = deletedAt
         
         self.notificationRadiusMeters = notificationRadiusMeters
@@ -137,6 +141,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         self.websiteURL = payload.websiteURL
         self.collectionIds = collectionIds
         self.notes = payload.notes
+        self.senderName = payload.senderName
     }
     
     /// Updates the spot's properties from a shared payload and adds a new collection ID.
@@ -153,6 +158,7 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
             self.collectionIds.append(newCollectionId)
         }
         self.notes = payload.notes
+        self.senderName = payload.senderName
         // Note: We don't update visitCount or other user-specific metadata
     }
     
@@ -204,11 +210,24 @@ struct Spot: Identifiable, Codable, Equatable, Hashable {
         wantsNearbyNotification = try container.decodeIfPresent(Bool.self, forKey: .wantsNearbyNotification) ?? false
         _notificationRadiusMeters = try container.decodeIfPresent(Double.self, forKey: ._notificationRadiusMeters) ?? 200.0
         notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        senderName = try container.decodeIfPresent(String.self, forKey: .senderName)
         createdAt = try container.decodeIfPresent(Timestamp.self, forKey: .createdAt)
         deletedAt = try container.decodeIfPresent(Timestamp.self, forKey: .deletedAt)
         
 
 //        visitCount = try container.decodeIfPresent(Int.self, forKey: .visitCount) ?? 0
+    }
+    
+    mutating func appendImportedNotes(from payload: SharedSpotPayload) {
+        let importedNotes = payload.notes ?? ""
+        guard !importedNotes.isEmpty else { return }
+        
+        let existingNotes = self.notes ?? ""
+        if existingNotes.isEmpty {
+            self.notes = importedNotes
+        } else {
+            self.notes = existingNotes + "\n\n--- Imported Notes ---\n" + importedNotes
+        }
     }
 }
 
@@ -252,3 +271,4 @@ enum SpotCategory: String, CaseIterable, Identifiable, Codable {
         }
     }
 }
+

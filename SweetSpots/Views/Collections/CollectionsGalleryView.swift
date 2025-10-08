@@ -7,6 +7,17 @@
 
 import SwiftUI
 
+enum CollectionSortOrder: String, CaseIterable, Identifiable {
+    case dateDescending = "Date Added (Newest)"
+    case dateAscending = "Date Added (Oldest)"
+    case nameAscending = "Name (A-Z)"
+    case spotCountDescending = "Spot Count (Most First)"
+    case spotCountAscending = "Spot Count (Fewest First)"
+    
+    var id: String { self.rawValue }
+}
+
+
 /// A view that displays all of the user's collections in a grid layout.
 struct CollectionsGalleryView: View {
     // MARK: - Environment
@@ -20,11 +31,29 @@ struct CollectionsGalleryView: View {
     @State private var collectionToManage: SpotCollection?
     @State private var collectionToDelete: SpotCollection?
     @State private var itemToShare: ShareableContent?
+    @State private var currentSortOrder: CollectionSortOrder = .dateDescending
     
     private let columns: [GridItem] = [
         GridItem(.flexible(), spacing: 16),
         GridItem(.flexible(), spacing: 16)
     ]
+    
+    private var sortedCollections: [SpotCollection] {
+        collectionViewModel.collections.sorted { c1, c2 in
+            switch currentSortOrder {
+            case .dateDescending:
+                return (c1.createdAt?.dateValue() ?? .distantPast) > (c2.createdAt?.dateValue() ?? .distantPast)
+            case .dateAscending:
+                return (c1.createdAt?.dateValue() ?? .distantPast) < (c2.createdAt?.dateValue() ?? .distantPast)
+            case .nameAscending:
+                return c1.name.localizedCaseInsensitiveCompare(c2.name) == .orderedAscending
+            case .spotCountDescending:
+                return spotCount(for: c1) > spotCount(for: c2)
+            case .spotCountAscending:
+                return spotCount(for: c1) < spotCount(for: c2)
+            }
+        }
+    }
     
     // MARK: - Body
     var body: some View {
@@ -45,6 +74,11 @@ struct CollectionsGalleryView: View {
             floatingAddButton
         }
         .navigationTitle("Collections")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                sortMenu
+            }
+        }
         .sheet(isPresented: $isShowingAddSheet) {
             // EnvironmentObjects are passed down automatically.
             AddCollectionView()
@@ -76,7 +110,7 @@ struct CollectionsGalleryView: View {
     private var collectionsGrid: some View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 16) {
-                ForEach(collectionViewModel.collections) { collection in
+                ForEach(sortedCollections) { collection in
                     VStack{
                         NavigationLink(destination: CollectionDetailView(collectionID: collection.id ?? "")) {
                             
@@ -110,6 +144,22 @@ struct CollectionsGalleryView: View {
             }
             .padding()
         }
+    }
+    
+    private var sortMenu: some View {
+        Menu {
+            Picker("Sort By", selection: $currentSortOrder) {
+                ForEach(CollectionSortOrder.allCases) { order in
+                    Text(order.rawValue).tag(order)
+                }
+            }
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down.circle")
+        }
+    }
+    
+    private func spotCount(for collection: SpotCollection) -> Int {
+        return spotsViewModel.spots.filter { $0.collectionIds.contains(collection.id ?? "") }.count
     }
 
     

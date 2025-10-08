@@ -8,6 +8,54 @@
 import SwiftUI
 import os.log
 
+private struct RequirementRow: View {
+    let description: String
+    let isMet: Bool
+    
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: isMet ? "checkmark.circle.fill" : "circle")
+                .foregroundColor(isMet ? .green : .secondary)
+            Text(description)
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+}
+
+private struct SecureInputView: View {
+    let title: String
+    @Binding var text: String
+    
+    @FocusState.Binding var focusedField: ChangePasswordView.Field?
+    let fieldCase: ChangePasswordView.Field
+
+    @State private var isVisible = false
+
+    var body: some View {
+        HStack {
+            if isVisible {
+                TextField(title, text: $text)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .focused($focusedField, equals: fieldCase) // Apply focus
+            } else {
+                SecureField(title, text: $text)
+                    .focused($focusedField, equals: fieldCase) // Apply focus
+            }
+            
+            Spacer()
+            
+            Image(systemName: isVisible ? "eye.slash.fill" : "eye.fill")
+                .foregroundColor(.secondary)
+                .onTapGesture {
+                    isVisible.toggle()
+                    // Immediately restore focus to this field
+                    focusedField = fieldCase
+                }
+        }
+    }
+}
 /// A view that allows an authenticated user to change their password.
 struct ChangePasswordView: View {
     private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "ChangePasswordView")
@@ -19,58 +67,63 @@ struct ChangePasswordView: View {
     @State private var newPassword = ""
     @State private var confirmPassword = ""
     @State private var isProcessing = false
-    @State private var errorMessage: String?
     
     @FocusState private var focusedField: Field?
-    
     enum Field: Hashable {
-        case current, new, confirm
-    }
+            case current, new, confirm
+        }
+    
     
     private var canSubmit: Bool {
         !currentPassword.isEmpty &&
-        newPassword.count >= AppConstants.minPasswordLength &&
+        !newPassword.isEmpty &&
         newPassword == confirmPassword &&
-        !isProcessing
+        !isProcessing &&
+        // This checks all requirements from the ViewModel
+        AuthViewModel.PasswordRequirement.allCases.allSatisfy {
+            authViewModel.passwordRequirementsMet[$0, default: false]
+        }
     }
     
     var body: some View {
         Form {
             Section {
-                SecureField("Current Password", text: $currentPassword)
-                    .focused($focusedField, equals: .current)
+                SecureInputView(title: "Current Password", text: $currentPassword, focusedField: $focusedField, fieldCase: .current)
                     .textContentType(.password)
-                    .submitLabel(.next)
-                    .onSubmit { focusedField = .new }
                 
-                SecureField("New Password", text: $newPassword)
-                    .focused($focusedField, equals: .new)
+                SecureInputView(title: "New Password", text: $newPassword, focusedField: $focusedField, fieldCase: .new)
                     .textContentType(.newPassword)
-                    .submitLabel(.next)
-                    .onSubmit { focusedField = .confirm }
                 
-                SecureField("Confirm New Password", text: $confirmPassword)
-                    .focused($focusedField, equals: .confirm)
+                SecureInputView(title: "Confirm New Password", text: $confirmPassword, focusedField: $focusedField, fieldCase: .confirm)
                     .textContentType(.newPassword)
-                    .submitLabel(.done)
-                    .onSubmit {
-                        if canSubmit {
-                            handleChangePassword()
-                        }
-                    }
             } header: {
                 Text("Change Password")
             } footer: {
-                VStack(alignment: .leading, spacing: 4) {
-                    if let error = errorMessage {
+                VStack(alignment: .leading, spacing: 5) {
+                    // Main error message from the ViewModel
+                    if let error = authViewModel.errorMessage {
                         Text(error)
                             .foregroundColor(.red)
                             .font(.caption)
                     }
                     
-                    Text("Password must be at least \(AppConstants.minPasswordLength) characters.")
+                    if !newPassword.isEmpty && !confirmPassword.isEmpty && newPassword != confirmPassword {
+                        Text("The new passwords do not match.")
+                            .foregroundColor(.red)
+                            .font(.caption)
+                    }
+                    
+                    Text("New password must meet the following requirements:")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .padding(.top, 5)
+                    
+                    ForEach(AuthViewModel.PasswordRequirement.allCases) { requirement in
+                        RequirementRow(
+                            description: requirement.description,
+                            isMet: authViewModel.passwordRequirementsMet[requirement, default: false]
+                        )
+                    }
                 }
                 .padding(.top, 5)
             }
@@ -98,9 +151,6 @@ struct ChangePasswordView: View {
                 Button("Cancel", action: { dismiss() })
             }
         }
-        .onAppear {
-            focusedField = .current
-        }
         .alert("Success", isPresented: $showingSuccess, actions: {
             Button("OK", role: .cancel) {
                 dismiss()
@@ -108,43 +158,33 @@ struct ChangePasswordView: View {
         }, message: {
             Text("Your password has been updated successfully.")
         })
+        .onChange(of: newPassword) {
+            authViewModel.validatePasswordLive(newPasswordValue: newPassword)
+        }
+        .onAppear {
+            authViewModel.errorMessage = nil
+            authViewModel.validatePasswordLive(newPasswordValue: newPassword)
+        }
     }
     
     /// Validates inputs and calls the AuthViewModel to update the user's password.
     private func handleChangePassword() {
-        guard canSubmit else { return }
-        
-        logger.info("User initiated password change.")
-        isProcessing = true
-        errorMessage = nil
+        // Pass local state to the ViewModel
+        authViewModel.currentPassword = currentPassword
         
         Task {
-            // Call the async function. It will complete when the network operation is done.
-            await authViewModel.updatePassword(
-                newPassword: newPassword,
-                newPasswordConfirmation: confirmPassword
-            )
+            isProcessing = true
+            await authViewModel.updatePassword(newPassword: newPassword, newPasswordConfirmation: confirmPassword)
+            isProcessing = false
             
-            // After the await, the operation is finished. Now check the result
-            // by inspecting the published properties on the authViewModel.
-            await MainActor.run {
-                self.isProcessing = false
-                
-                // Check if the ViewModel has published an error message.
-                if let vmError = authViewModel.errorMessage {
-                    // --- Failure Path ---
-                    self.logger.error("Password change failed: \(vmError)")
-                    self.errorMessage = vmError
-                    let generator = UINotificationFeedbackGenerator()
-                    generator.notificationOccurred(.error)
-                } else {
-                    // --- Success Path ---
-                    // If no error message is set, the operation was successful.
-                    self.logger.info("Password change successful.")
-                    let generator = UINotificationFeedbackGenerator()
-                    generator.notificationOccurred(.success)
-                    self.showingSuccess = true
-                }
+            // Show success alert only if there's no error
+            if authViewModel.errorMessage == nil {
+                let generator = UINotificationFeedbackGenerator()
+                generator.notificationOccurred(.success)
+                self.showingSuccess = true
+            } else {
+                let generator = UINotificationFeedbackGenerator()
+                generator.notificationOccurred(.error)
             }
         }
     }

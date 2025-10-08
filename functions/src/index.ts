@@ -75,13 +75,17 @@ export const verifyAndFetchSharedData = onCall(async (request) => {
     const decoded = jwt.verify(token, JWT_SECRET) as { uid: string; type: "spot" | "collection"; id: string; };
     const { uid, type, id } = decoded;
 
+    const senderUserRecord = await admin.auth().getUser(uid);
+    const senderName = senderUserRecord.displayName || "A SweetSpots User";
+
     if (type === "spot") {
         const doc = await db.collection("users").doc(uid).collection("spots").doc(id).get();
         if (!doc.exists || !doc.data()) {
             throw new HttpsError("not-found", "Spot not found.");
         }
         // Transform the Spot data to the payload format before returning
-        return { type: "spot", data: spotToPayload(doc.data()!) };
+        const payload = spotToPayload(doc.data()!);
+        return { type: "spot", data: { ...payload, senderName: senderName } };
 
     } else if (type === "collection") {
         const collectionDoc = await db.collection("users").doc(uid).collection("spotCollections").doc(id).get();
@@ -105,7 +109,7 @@ export const verifyAndFetchSharedData = onCall(async (request) => {
             spots: spotPayloads,
         };
         
-        return { type: "collection", data: collectionPayload };
+        return { type: "collection", data: { ...collectionPayload, senderName: senderName } };
     } else {
         throw new HttpsError("invalid-argument", "Invalid share type in token.");
     }

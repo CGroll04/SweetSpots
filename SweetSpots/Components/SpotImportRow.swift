@@ -31,13 +31,13 @@ struct SpotImportRow: View {
     // Helper properties to determine the row's appearance
     private var iconName: String {
         switch importableSpot.state {
-        case .new: return "checkmark.circle.fill"
+        case .new: return "plus.circle.fill"
         case .conflict: return "exclamationmark.triangle.fill"
-        case .resolved(let resolution):
-            switch resolution {
+        case .resolved(let choice):
+            switch choice {
             case .keepOriginal: return "shield.slash.fill"
-            case .updateWithImported: return "checkmark.circle.fill"
-            case .saveAsDuplicate: return "plus.circle.fill"
+            case .appendNotes: return "text.badge.plus"
+            case .replaceSpot: return "arrow.triangle.2.circlepath.circle.fill"
             }
         }
     }
@@ -53,8 +53,8 @@ struct SpotImportRow: View {
     private var statusText: String {
         switch importableSpot.state {
         case .new: return "Ready to import."
-        case .conflict: return "Conflict: You already have this spot."
-        case .resolved(let resolution): return "Resolved: \(resolution.rawValue)."
+        case .conflict: return "Conflict: A spot with this address already exists."
+        case .resolved(let choice): return "Resolution: \(choice.rawValue)."
         }
     }
 }

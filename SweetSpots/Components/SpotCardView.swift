@@ -72,6 +72,13 @@ struct SpotCardView: View {
 //                                .clipShape(Capsule())
 //                        }
                     }
+                    
+                    if let sender = spot.senderName {
+                        Label(sender, systemImage: "square.and.arrow.down")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
                 }
                 .padding(.vertical, 10)
 

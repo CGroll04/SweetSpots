@@ -9,5 +9,6 @@ struct SharedCollectionPayload: Codable, Equatable {
     var collectionName: String
     var collectionDescription: String?
     var emoji: String?
+    var senderName: String?
     var spots: [SharedSpotPayload]
 }

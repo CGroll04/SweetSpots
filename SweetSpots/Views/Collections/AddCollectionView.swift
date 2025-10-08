@@ -26,6 +26,7 @@ struct AddCollectionView: View {
     // State
     @State private var selectedSpotIDs: Set<String> = []
     @State private var collectionName: String = ""
+    @State private var collectionDescription: String = ""
     @State private var isProcessing = false
     
     private var allSpots: [Spot] {
@@ -64,6 +65,13 @@ struct AddCollectionView: View {
                                 Text("😀")
                             }
                         }
+                    }
+                    VStack(alignment: .leading) {
+                        Text("Description (Optional)")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        TextEditor(text: $collectionDescription)
+                            .frame(height: 80)
                     }
                 }
                 
@@ -129,7 +137,9 @@ struct AddCollectionView: View {
                 let newCollectionId = try await collectionViewModel.addCollection(
                     name: collectionName,
                     emoji: collectionEmoji.isEmpty ? nil : collectionEmoji,
-                    userId: userId
+                    senderName: nil,
+                    userId: userId,
+                    description: collectionDescription.isEmpty ? nil : collectionDescription
                 )
 
                 if !selectedSpotIDs.isEmpty {

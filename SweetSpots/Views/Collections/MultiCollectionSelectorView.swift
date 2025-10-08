@@ -5,41 +5,42 @@
 //  Created by Charlie Groll on 2025-09-04.
 //
 
+
 import SwiftUI
 
-/// A view that presents a list of all collections, allowing the user to select multiple collections.
-///
-/// The selection state is managed via the `selectedCollectionIds` binding.
 struct MultiCollectionSelectorView: View {
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
     @Binding var selectedCollectionIds: Set<String>
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationView {
-            List(collectionViewModel.collections) { collection in
+        
+        List(collectionViewModel.collections) { collection in
+            
+            HStack {
+                Text(collection.name)
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                // This button acts as the checkbox
                 Button(action: {
                     toggleSelection(for: collection.id)
                 }) {
-                    HStack {
-                        Text(collection.name)
-                        Spacer()
-                        if let id = collection.id, selectedCollectionIds.contains(id) {
-                            Image(systemName: "checkmark")
-                                .foregroundStyle(Color.accentColor)
-                        }
-                    }
+                    Image(systemName: isSelected(collection) ? "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundStyle(isSelected(collection) ? Color.accentColor : .secondary)
                 }
                 .buttonStyle(.plain)
             }
-            .navigationTitle("Select Collections")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
         }
+        .navigationTitle("Select Collections")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+    
+    /// Checks if a given collection is in the selection set.
+    private func isSelected(_ collection: SpotCollection) -> Bool {
+        guard let id = collection.id else { return false }
+        return selectedCollectionIds.contains(id)
     }
     
     /// Adds or removes a collection ID from the selection set.

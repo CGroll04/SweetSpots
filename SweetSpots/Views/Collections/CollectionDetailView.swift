@@ -136,7 +136,7 @@ struct CollectionDetailView: View {
                 presenting: spotToDelete
             ) { spot in
                 Button("Delete Spot", role: .destructive) {
-                    spotsViewModel.deleteSpot(spot) { _ in }
+                    spotsViewModel.deleteSpot(spot, isPermanent: false) { _ in }
                 }
             } message: { spot in
                 Text("This will move \"\(spot.name)\" to Recently Deleted.")
@@ -171,6 +171,16 @@ struct CollectionDetailView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal)
+            }
+            
+            if let sender = collection.senderName {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.and.arrow.down.fill")
+                    Text("Imported from \(sender)")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
             }
             
             let spotCount = displayedSpots.count

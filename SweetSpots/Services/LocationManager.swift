@@ -24,6 +24,7 @@ class LocationManager: NSObject, ObservableObject {
     @Published var authorizationStatus: CLAuthorizationStatus
     @Published var isRequestingLocationUpdates: Bool = false
     @Published var geofenceTriggeredAlert: GeofenceAlertInfo? = nil
+    @Published var notificationStatus: UNAuthorizationStatus = .notDetermined
     
     @Published var showPermissionAlert = false
     
@@ -66,6 +67,9 @@ class LocationManager: NSObject, ObservableObject {
         loadPersistedData()
         setupLocationManager()
         setupAppStateObservers()
+        Task { @MainActor in
+            checkNotificationStatus()
+        }
     }
     
     private func setupLocationManager() {
@@ -74,6 +78,14 @@ class LocationManager: NSObject, ObservableObject {
         clManager.pausesLocationUpdatesAutomatically = true
         clManager.distanceFilter = 50 // Only update location when user moves 50m
         updateBackgroundLocationCapability(for: self.authorizationStatus)
+    }
+    
+    func checkNotificationStatus() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async {
+                self.notificationStatus = settings.authorizationStatus
+            }
+        }
     }
     
     private func setupAppStateObservers() {
@@ -115,6 +127,18 @@ class LocationManager: NSObject, ObservableObject {
         ) { [weak self] notification in
             Task { @MainActor [weak self] in
                 self?.handleGeofenceNotificationTapped(notification)
+            }
+        }
+        
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: nil // Run on any queue
+        ) { [weak self] _ in
+            // Then explicitly jump to the MainActor
+            Task { @MainActor [weak self] in
+                self?.logger.info("App became active, checking notification status.")
+                self?.checkNotificationStatus()
             }
         }
     }
