@@ -52,7 +52,7 @@ struct ContentView: View {
             }
         }
         .fullScreenCover(isPresented: $showTutorial) {
-            TutorialView {
+            TutorialView(context: .firstLaunch) {
                 // This code runs when the tutorial is dismissed
                 hasShownInitialTutorial = true // Mark tutorial as seen so it doesn't show again
                 showTutorial = false

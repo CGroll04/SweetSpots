@@ -90,20 +90,17 @@ struct SpotFormSectionView: View {
     // The content of the form, with all fields bound to the `formState`.
     @ViewBuilder
     private var formFields: some View {
-        // --- Main Details ---
+        // --- SECTION 1: CORE INFO ---
+        locationSearchAndDisplayView()
+        
         ThemedTextField(title: "Spot Name*", text: $formState.spotName, systemImage: "pencil.line")
             .focused($focusedField, equals: .name)
             .textInputAutocapitalization(.words)
         if !formState.spotName.isEmpty && !formState.isValidSpotName {
             Text("Spot name max 100 characters.").font(.caption).foregroundColor(.themeError)
         }
-
-        locationSearchAndDisplayView()
         
-        ThemedTextField(title: "Source URL", text: $formState.spotSourceURLInput, systemImage: "link")
-            .focused($focusedField, equals: .url)
-            .disabled(formState.isFromShare) // Disable if it came from share extension
-        
+        // --- SECTION 2: ORGANIZATION ---
         ZStack {
             HStack {
                 if let selectedCategory = formState.selectedCategory {
@@ -144,12 +141,10 @@ struct SpotFormSectionView: View {
             .opacity(0.015)
         }
         
-        // --- Optional Details ---
-        ThemedTextField(title: "Phone Number", text: $formState.spotPhoneNumber, systemImage: "phone.fill")
-            .focused($focusedField, equals: .phone)
-        ThemedTextField(title: "Website URL", text: $formState.spotWebsiteURLInput, systemImage: "globe")
-            .focused($focusedField, equals: .website)
+        // --- Collection Picker ---
+        collectionPicker()
         
+        // --- SECTION 3: DETAILS ---
         VStack(alignment: .leading, spacing: 4) {
             Text("Notes").font(.caption).foregroundStyle(.secondary)
             TextEditor(text: $formState.spotNotes)
@@ -157,12 +152,21 @@ struct SpotFormSectionView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.4), lineWidth: 1))
         }
+        ThemedTextField(title: "Source URL", text: $formState.spotSourceURLInput, systemImage: "link")
+            .focused($focusedField, equals: .url)
+            .disabled(formState.isFromShare) // Disable if it came from share extension
         
-        // --- Notification Settings ---
+        // --- SECTION 4: PROXIMITY ALERT ---
         notificationSettings()
         
-        // --- Collection Picker ---
-        collectionPicker()
+        // --- SECTION 5: ADDITIONAL INFO (COLLAPSIBLE) ---
+        DisclosureGroup("Additional Info") {
+            ThemedTextField(title: "Phone Number", text: $formState.spotPhoneNumber, systemImage: "phone.fill")
+                .focused($focusedField, equals: .phone)
+            ThemedTextField(title: "Website URL", text: $formState.spotWebsiteURLInput, systemImage: "globe")
+                .focused($focusedField, equals: .website)
+        }
+        .tint(Color.themeAccent) // Styles the disclosure arrow
     }
     
     // MARK: Section Subviews
@@ -247,42 +251,44 @@ struct SpotFormSectionView: View {
                 
                 
             case .results(let completions):
-                SearchResultsList(results: completions) { completion in
-                    focusedField = nil // Dismiss keyboard
-
-                    // 1. Set the state to loadingDetails to show a spinner
-                    formState.searchCompleterVM.searchState = .loadingDetails
-                    
-                    let immediateAddress = completion.subtitle.isEmpty
+                if focusedField == .search {
+                    SearchResultsList(results: completions) { completion in
+                        focusedField = nil // Dismiss keyboard
+                        
+                        // 1. Set the state to loadingDetails to show a spinner
+                        formState.searchCompleterVM.searchState = .loadingDetails
+                        
+                        let immediateAddress = completion.subtitle.isEmpty
                         ? completion.title
                         : "\(completion.title), \(completion.subtitle)"
-                    formState.searchCompleterVM.queryFragment = immediateAddress
-                    formState.spotAddress = immediateAddress
-                    Task {
-                        do {
-                            // 2. Try to fetch the details
-                            let details = try await formState.searchCompleterVM.getPlaceDetails(for: completion)
-                            
-                            // 3. On success, update the form and set state to .selected
-                            await MainActor.run {
-                                let potentialName = details.name.trimmingCharacters(in: .whitespacesAndNewlines)
-
-                                // 2. Only assign it if the form's name is empty AND the potential name isn't.
-                                if formState.spotName.isEmpty && !potentialName.isEmpty {
-                                    formState.spotName = potentialName
-                                }
-                                formState.spotAddress = details.fullAddress
-                                formState.searchCompleterVM.queryFragment = details.fullAddress
-                                formState.spotCoordinates = details.coordinates
-                                if formState.spotPhoneNumber.isEmpty { formState.spotPhoneNumber = details.phoneNumber ?? "" }
-                                if formState.spotWebsiteURLInput.isEmpty { formState.spotWebsiteURLInput = details.websiteURL?.absoluteString ?? "" }
+                        formState.searchCompleterVM.queryFragment = immediateAddress
+                        formState.spotAddress = immediateAddress
+                        Task {
+                            do {
+                                // 2. Try to fetch the details
+                                let details = try await formState.searchCompleterVM.getPlaceDetails(for: completion)
                                 
-                                formState.searchCompleterVM.searchState = .selected
-                                formState.objectWillChange.send()
+                                // 3. On success, update the form and set state to .selected
+                                await MainActor.run {
+                                    let potentialName = details.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    
+                                    // 2. Only assign it if the form's name is empty AND the potential name isn't.
+                                    if formState.spotName.isEmpty && !potentialName.isEmpty {
+                                        formState.spotName = potentialName
+                                    }
+                                    formState.spotAddress = details.fullAddress
+                                    formState.searchCompleterVM.queryFragment = details.fullAddress
+                                    formState.spotCoordinates = details.coordinates
+                                    if formState.spotPhoneNumber.isEmpty { formState.spotPhoneNumber = details.phoneNumber ?? "" }
+                                    if formState.spotWebsiteURLInput.isEmpty { formState.spotWebsiteURLInput = details.websiteURL?.absoluteString ?? "" }
+                                    
+                                    formState.searchCompleterVM.searchState = .selected
+                                    formState.objectWillChange.send()
+                                }
+                            } catch {
+                                // 4. On failure, update the state to show an error message to the user
+                                formState.searchCompleterVM.searchState = .error("Failed to load location details. Please try again.")
                             }
-                        } catch {
-                            // 4. On failure, update the state to show an error message to the user
-                            formState.searchCompleterVM.searchState = .error("Failed to load location details. Please try again.")
                         }
                     }
                 }

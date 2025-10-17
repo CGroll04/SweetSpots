@@ -8,6 +8,11 @@
 import SwiftUI
 import PDFKit
 
+enum TutorialContext {
+    case firstLaunch
+    case fromSettings
+}
+
 // A helper view to display a single PDF page
 struct PDFKitView: UIViewRepresentable {
     let url: URL
@@ -23,38 +28,52 @@ struct PDFKitView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: PDFView, context: Context) {
-        // No update needed
     }
 }
 
 struct TutorialView: View {
+    
+    let context: TutorialContext
+    let onDismiss: () -> Void
+    
+    @State private var selection = 0
+    
     // List the names of your PDF files as they appear in your Assets
     let slideNames = ["Tutorial1", "Tutorial2","Tutorial3","Tutorial4","Tutorial5","Tutorial6","Tutorial7"]
+
+    private var isLastSlide: Bool {
+        selection == slideNames.count - 1
+    }
     
-    // This closure is called when the view is dismissed
-    let onDismiss: () -> Void
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            // TabView creates the swipeable pages
-            TabView {
-                ForEach(slideNames, id: \.self) { slideName in
+            TabView(selection: $selection) {
+                ForEach(slideNames.indices, id: \.self) { index in
+                    let slideName = slideNames[index]
+                    
                     if let url = Bundle.main.url(forResource: slideName, withExtension: "pdf") {
                         PDFKitView(url: url)
+                            .tag(index)
                     } else {
                         Text("Could not load slide: \(slideName)")
+                            .tag(index)
                     }
                 }
             }
             .tabViewStyle(.page)
             .ignoresSafeArea()
 
-            // Dismiss Button
-            Button(action: onDismiss) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.largeTitle)
-                    .foregroundColor(.gray)
-                    .background(Circle().fill(.white).padding(4))
+            // Dismiss Button - This logic is now correct
+            HStack {
+                Spacer()
+                if context == .fromSettings || isLastSlide {
+                    Button(action: onDismiss) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.largeTitle)
+                            .foregroundColor(.gray.opacity(0.5))
+                    }
+                }
             }
             .padding()
         }

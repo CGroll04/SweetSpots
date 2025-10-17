@@ -55,11 +55,12 @@ struct SettingsView: View {
                 userProfileSection()
                 notificationsAndLocationSection()
                 aboutSection()
+                supportSection()
                 recentlyDeletedSection()
                 accountActionsSection()
             }
             .sheet(isPresented: $showTutorialFromSettings) {
-                TutorialView {
+                TutorialView(context: .fromSettings){
                     // This is the dismiss action for the tutorial
                     showTutorialFromSettings = false
                 }
@@ -142,6 +143,16 @@ struct SettingsView: View {
             }
         }
     }
+    
+    @ViewBuilder
+    private func supportSection() -> some View {
+        Section(header: Text("Support")) {
+            Button(action: openEmail) {
+                Label("Contact Us & Feedback", systemImage: "envelope.fill")
+            }
+            .foregroundStyle(Color.accentColor) // Matches the style of your other links
+        }
+    }
 
     @ViewBuilder
     private func currentPermissionStatusView() -> some View {
@@ -188,6 +199,34 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("To get notifications when you're near a spot, SweetSpots needs 'Always' location access. Your location data is never stored or shared.")
+        }
+    }
+    
+    private func openEmail() {
+        let supportEmail = "getsweetspots@gmail.com"
+        let subject = "SweetSpots App Feedback v\(currentAppVersion())"
+        
+        // Add helpful info for the user to fill out
+        let body = """
+        
+        
+        -------------------
+        App Version: \(currentAppVersion())
+        iOS Version: \(UIDevice.current.systemVersion)
+        Device Model: \(UIDevice.current.model)
+        """
+        
+        // Create the mailto URL
+        var components = URLComponents()
+        components.scheme = "mailto"
+        components.path = supportEmail
+        components.queryItems = [
+            URLQueryItem(name: "subject", value: subject),
+            URLQueryItem(name: "body", value: body)
+        ]
+        
+        if let url = components.url {
+            UIApplication.shared.open(url)
         }
     }
     
