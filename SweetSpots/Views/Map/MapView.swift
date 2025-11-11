@@ -41,6 +41,9 @@ struct MapView: View {
     @State private var showGeofenceRadii: Bool = false
     @AppStorage("globalGeofencingEnabled") private var globalGeofencingEnabled: Bool = true
     
+    @State private var showMapViewTip: Bool = false
+    @AppStorage(TutorialKeys.hasSeenMapViewTip) private var hasSeenMapViewTip: Bool = false
+    
     // MARK: - Computed Properties
     private var spotsForMap: [Spot] {
         if selectedCategoryFilters.isEmpty {
@@ -108,8 +111,38 @@ struct MapView: View {
                         navigationViewModel.stopNavigation() // Let the user dismiss the error
                     }
                 }
+                
+                if showMapViewTip {
+                    ZStack {
+                        // Dimming layer
+                        Color.black.opacity(0.4)
+                            .ignoresSafeArea()
+                            .onTapGesture { showMapViewTip = false } // Dismiss on tap
+
+                        // Content
+                        TutorialPopoverContent(
+                            title: "Map & Directions",
+                            message: "Tap any spot on the map to see its details. From there, you can tap the 'Directions' button to start navigation.",
+                            onClose: { showMapViewTip = false }
+                        )
+                        .presentationCompactAdaptation(.popover)
+                        .padding(30) // Space from screen edges
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    .zIndex(100) // Ensure it's on top of everything
+                }
             }
-            .onAppear { handleInitialLocationSetup() }
+            .onAppear {
+                handleInitialLocationSetup()
+                if !hasSeenMapViewTip {
+                    hasSeenMapViewTip = true // Mark this tip as "seen"
+                    
+                    // Use a delay to let the view load
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+                        showMapViewTip = true
+                    }
+                }
+            }
             .task { await fallbackInitialCameraIfNeeded() }
             .onChange(of: locationManager.userLocation, handleLocationChange)
             .onChange(of: selectedSpot, handleSpotSelection)
@@ -141,13 +174,13 @@ struct MapView: View {
                 // Do not show the toolbar during turn-by-turn navigation
                 if !navigationViewModel.isNavigating {
                     ToolbarItemGroup(placement: .topBarLeading) {
-                        HStack {
-                            Text("My SweetSpots")
-                                .font(.headline)
-                                .fontWeight(.bold)
-                                .fixedSize()
+                        Button {
+                            // This resets and shows the tip for this page
+                            showMapViewTip = true
+                        } label: {
+                            Image(systemName: "questionmark.circle")
+                                .foregroundStyle(Color.themePrimary)
                         }
-                        .padding(.horizontal)
                     }
                     
                     // Buttons on the right
@@ -259,7 +292,7 @@ struct MapView: View {
                 )
                 .environmentObject(locationManager)
                 .padding(.trailing, 15)
-                .padding(.bottom, 80)
+                .padding(.bottom, 90)
             }
             .overlay(alignment: .topLeading) {
                 VStack(alignment: .leading, spacing: 12) { // Arrange vertically
@@ -369,9 +402,7 @@ struct MapView: View {
     
     // MARK: - Enhanced Location and Navigation Logic
     private func handleInitialLocationSetup() {
-        if locationManager.userLocation == nil {
-            locationManager.requestLocationAuthorization(aimForAlways: false)
-        }
+        locationManager.requestWhenInUseAuthorization()
         
         if locationManager.authorizationStatus == .authorizedWhenInUse || locationManager.authorizationStatus == .authorizedAlways {
             locationManager.startUpdatingUserLocation()

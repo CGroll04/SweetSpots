@@ -29,6 +29,8 @@ struct AddCollectionView: View {
     @State private var collectionDescription: String = ""
     @State private var isProcessing = false
     
+    @AppStorage(TutorialKeys.hasAddedFirstCollection) private var hasAddedFirstCollection: Bool = false
+    
     private var allSpots: [Spot] {
         spotsViewModel.spots
     }
@@ -130,7 +132,9 @@ struct AddCollectionView: View {
             logger.fault("User ID is missing. Cannot create collection.")
             return
         }
-
+        
+        let isFirstCollectionAdd = collectionViewModel.collections.isEmpty
+        
         Task {
             isProcessing = true
             do {
@@ -144,6 +148,14 @@ struct AddCollectionView: View {
 
                 if !selectedSpotIDs.isEmpty {
                     spotsViewModel.addSpotsToCollection(spotIDs: selectedSpotIDs, toCollection: newCollectionId)
+                }
+                
+                if isFirstCollectionAdd {
+                    // 1. Set the flag so the "Add Collection" tip won't show again
+                    self.hasAddedFirstCollection = true
+                    
+                    // 2. Post notification to show the "Share Collection" tip
+                    NotificationCenter.default.post(name: .userAddedFirstCollection, object: nil)
                 }
                 
                 logger.info("Successfully created collection '\(self.collectionName)' with \(self.selectedSpotIDs.count) spots.")

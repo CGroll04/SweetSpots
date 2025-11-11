@@ -148,6 +148,70 @@ class AuthViewModel: ObservableObject {
             self.passwordRequirementsMet = newRequirementsMet
         }
     }
+    
+    // MARK: - Account Deletion
+    /// This is the main function called from your SettingsView.
+    func deleteAccount() async {
+        isLoading = true
+        errorMessage = nil
+        
+        guard let user = self.userSession else {
+            self.errorMessage = "No user is currently signed in."
+            self.isLoading = false
+            return
+        }
+        
+        do {
+            // STEP 1: Delete all user data from Firestore first.
+            try await deleteAllUserData(for: user)
+            logger.info("Successfully deleted all Firestore data for UID: \(user.uid)")
+            
+            // STEP 2: Only after data is gone, delete the authentication user.
+            try await user.delete()
+            logger.info("Successfully deleted user account for UID: \(user.uid)")
+            
+        } catch {
+            logger.error("Failed during account deletion process: \(error.localizedDescription)")
+            // Provide a helpful message if re-authentication is needed
+            let nsError = error as NSError
+            if nsError.domain == AuthErrorDomain, nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
+                self.errorMessage = "This is a sensitive action. Please sign out and sign back in before deleting your account."
+            } else {
+                self.errorMessage = "Failed to delete account. Please check your connection and try again."
+            }
+        }
+        
+        isLoading = false
+    }
+    
+    /// Helper function to delete all Firestore data for a given user.
+    private func deleteAllUserData(for user: User) async throws {
+        let uid = user.uid
+        let batch = db.batch()
+
+        // 1. Delete all of the user's spots
+        let spotsRef = db.collection("users").document(uid).collection("spots")
+        let spotsSnapshot = try await spotsRef.getDocuments()
+        spotsSnapshot.documents.forEach { doc in
+            batch.deleteDocument(doc.reference)
+        }
+        
+        // 2. Delete all of the user's collections
+        let collectionsRef = db.collection("users").document(uid).collection("spotCollections")
+        let collectionsSnapshot = try await collectionsRef.getDocuments()
+        collectionsSnapshot.documents.forEach { doc in
+            batch.deleteDocument(doc.reference)
+        }
+        
+        // 3. Delete the user's username reservation
+        if let username = user.displayName?.lowercased() {
+            let usernameRef = db.collection("usernames").document(username)
+            batch.deleteDocument(usernameRef)
+        }
+        
+        // 4. Commit all deletions as a single batch
+        try await batch.commit()
+    }
 
     // MARK: - Authentication Operations
     /// Attempts to sign in the user with the provided email and password.

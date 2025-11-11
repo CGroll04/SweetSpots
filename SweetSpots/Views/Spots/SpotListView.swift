@@ -44,6 +44,12 @@ struct SpotListView: View {
     // State to control side menu presentation
     @State private var showingSettingsSheet: Bool = false
     
+    @State private var showAddSpotManualTip: Bool = false
+    @AppStorage(TutorialKeys.hasSeenAddSpotManualTip) private var hasSeenAddSpotManualTip: Bool = false
+    
+    @State private var showShareSpotTip: Bool = false
+    @AppStorage(TutorialKeys.hasSeenShareSpotTip) private var hasSeenShareSpotTip: Bool = false
+    
     // MARK: - Geofencing State
     @State private var hasInitializedGeofences = false
     @AppStorage("globalGeofencingEnabled") private var geofencingGloballyEnabled: Bool = true
@@ -227,9 +233,33 @@ struct SpotListView: View {
 
     // Layer 2: Apply modifiers in stages
     private var baseContentWithModifiers: some View {
-        VStack(spacing: 0) {
-            Spacer().frame(height: 1)
-            coreZStackContent
+        ZStack {
+            VStack(spacing: 0){
+                Spacer().frame(height: 1)
+                coreZStackContent
+            }
+            if showAddSpotManualTip {
+                // Dimming layer
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        dismissAddSpotManualTip()
+                    }
+                    .transition(.opacity) // Fade the dimmer
+
+                // Content
+                TutorialPopoverContent(
+                    title: "Add Your First Spot",
+                    message: "You can add a spot manually by tapping the '+' button at the top of your screen.",
+                    onClose: {
+                        dismissAddSpotManualTip()
+                    }
+                )
+                .presentationCompactAdaptation(.popover)
+                .padding(30) // Space from screen edges
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                .zIndex(100)
+            }
         }
         .navigationTitle(currentNavigationTitle)
         .navigationBarTitleDisplayMode(.large)
@@ -269,6 +299,22 @@ struct SpotListView: View {
         }
         .sheet(isPresented: $showingSettingsSheet) {
             SettingsView(onDismiss: { showingSettingsSheet = false })
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .infoPDFDismissed)) { _ in
+            // When the PDF closes...
+            if !hasSeenAddSpotManualTip {
+                // ...show the tip and mark it as "seen" for the one-time flow.
+                self.showAddSpotManualTip = true
+                self.hasSeenAddSpotManualTip = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .userAddedFirstSpot)) { _ in
+            // When the first spot is saved...
+            if !hasSeenShareSpotTip {
+                // ...show the tip and mark it as "seen" for the one-time flow.
+                self.showShareSpotTip = true
+                self.hasSeenShareSpotTip = true
+            }
         }
     }
 
@@ -361,12 +407,29 @@ struct SpotListView: View {
                                 Task {
                                     await handleShare(for: spot)
                                 }
-                            }
+                            },
+                            
+                            isFirstSpot: spot.id == spots.first?.id,
+                            showShareSpotTip: $showShareSpotTip
                         )
                     }
                 }
             }
             .padding(.horizontal)
+        }
+    }
+    
+    private func dismissAddSpotManualTip() {
+        withAnimation {
+            showAddSpotManualTip = false
+        }
+        
+        // This is the chaining logic you need in both places
+        if !displayedSpots.isEmpty {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                // Make sure not to show it if it's already been seen
+                showShareSpotTip = true
+            }
         }
     }
     
@@ -419,10 +482,20 @@ struct SpotListView: View {
     // MARK: - Toolbar
     @ToolbarContentBuilder
     private func navigationToolbarItems() -> some ToolbarContent {
+        ToolbarItem(placement: .navigationBarLeading) {
+            Button {
+                showAddSpotManualTip = true
+            } label: {
+                Image(systemName: "questionmark.circle") // Use new icon
+                    .foregroundStyle(Color.themePrimary)
+            }
+        }
+        
         ToolbarItemGroup(placement: .navigationBarTrailing) {
             HStack(spacing: 8) {
                 Button {
                     showingAddSheet = true
+                    showAddSpotManualTip = false // Close the popover
                 } label: {
                     Image(systemName: "plus")
                         .foregroundStyle(Color.themePrimary)

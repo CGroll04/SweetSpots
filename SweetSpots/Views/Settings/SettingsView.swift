@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SafariServices
 import os.log
 
 /// A view that provides app settings, account management, and other administrative actions.
@@ -25,11 +26,15 @@ struct SettingsView: View {
     @State private var alertInfo: AlertInfo? = nil
     @State private var showingBulkAlertConfirmation: BulkAlertActionType? = nil
     @State private var isProcessingBulkUpdate: Bool = false
-    @State private var showTutorialFromSettings = false
     @State private var showingPermissionAlert = false
+    
+    @State private var showingDeleteAlert = false
     
     @State private var isTrashExpanded: Bool = false
     @State private var spotToShowDetails: Spot? = nil
+    
+    private let privacyURL = URL(string: "https://thesweetspotsapp.com/SweetSpots_Privacy_Policy.pdf")!
+    private let termsURL   = URL(string: "https://thesweetspotsapp.com/SweetSpots_Terms_and_Conditions.pdf")!
 
     @AppStorage("globalGeofencingEnabled") private var globalGeofencingSystemEnabled: Bool = true
     
@@ -59,12 +64,6 @@ struct SettingsView: View {
                 recentlyDeletedSection()
                 accountActionsSection()
             }
-            .sheet(isPresented: $showTutorialFromSettings) {
-                TutorialView(context: .fromSettings){
-                    // This is the dismiss action for the tutorial
-                    showTutorialFromSettings = false
-                }
-            }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.large)
             .alert(item: $alertInfo) { info in
@@ -75,6 +74,16 @@ struct SettingsView: View {
                 Button("Sign Out", role: .destructive) { performSignOut() }
             } message: {
                 Text("Are you sure you want to sign out?")
+            }
+            .alert("Permanently Delete Account?", isPresented: $showingDeleteAlert) {
+                Button("Delete", role: .destructive) {
+                    Task {
+                        await performAccountDeletion()
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("All of your spots and collections will be permanently removed. This action is irreversible. Are you sure you want to continue?")
             }
             .alert(item: $showingBulkAlertConfirmation) { actionType in
                 Alert(
@@ -355,9 +364,15 @@ struct SettingsView: View {
         Section(header: Text("About")) {
             LabeledContent("App Version", value: currentAppVersion())
             
-            Button("View Tutorial") {
-                showTutorialFromSettings = true
+            Button("Privacy Policy") {
+                UIApplication.shared.open(privacyURL)
             }
+            .foregroundStyle(Color.accentColor)
+
+            Button("Terms & Conditions") {
+                UIApplication.shared.open(termsURL)
+            }
+            .foregroundStyle(Color.accentColor)
         }
     }
 
@@ -366,8 +381,26 @@ struct SettingsView: View {
         Section {
             Button("Sign Out", role: .destructive, action: { showingSignOutAlert = true })
                 .frame(maxWidth: .infinity, alignment: .center)
+                .tint(.accentColor) // Make sign out blue to distinguish from delete
+            
+            Button("Delete Account", role: .destructive, action: {
+                showingDeleteAlert = true
+            })
+            .frame(maxWidth: .infinity, alignment: .center)
         }
     }
+    
+    private func performAccountDeletion() async {
+            isProcessingBulkUpdate = true // Reuse this for a loading spinner
+            await authViewModel.deleteAccount()
+            isProcessingBulkUpdate = false
+            
+            // If an error occurred (like needing a recent sign-in), show it
+            if let error = authViewModel.errorMessage {
+                self.alertInfo = AlertInfo(title: "Deletion Failed", message: error)
+            }
+            // On success, the user will be logged out automatically, dismissing this view.
+        }
 
     // MARK: - Helper Functions & Actions
     /// Signs the user out and clears all local data and listeners.

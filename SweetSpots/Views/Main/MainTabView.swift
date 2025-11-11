@@ -297,13 +297,12 @@ struct MainTabView: View {
 
     private func setupLocationServices() {
         logger.info("Setting up location services")
-        if locationManager.authorizationStatus == .notDetermined {
-            locationManager.requestLocationAuthorization(aimForAlways: false)
-        }
-        if locationManager.authorizationStatus == .authorizedWhenInUse || locationManager.authorizationStatus == .authorizedAlways {
-            if !locationManager.isRequestingLocationUpdates {
-                locationManager.startUpdatingUserLocation()
-            }
+        // We no longer request permission here. We only start updates if we already have it.
+        if (locationManager.authorizationStatus == .authorizedWhenInUse ||
+            locationManager.authorizationStatus == .authorizedAlways) &&
+            !locationManager.isRequestingLocationUpdates
+        {
+            locationManager.startUpdatingUserLocation()
         }
     }
 
@@ -312,7 +311,7 @@ struct MainTabView: View {
             logger.info("Skipping initial geofence sync - globally disabled");
             return }
         let locationOK = locationManager.authorizationStatus == .authorizedAlways
-        let notificationsOK = await locationManager.requestNotificationPermissionAsync()
+        let notificationsOK = locationManager.notificationStatus == .authorized
         if locationOK && notificationsOK {
             try? await Task.sleep(for: .milliseconds(500))
             logger.info("Attempting initial geofence sync. Spots count: \(spotsViewModel.spots.count)")
@@ -349,16 +348,7 @@ struct MainTabView: View {
 
     private func handleLocationAuthorizationChange(oldValue: CLAuthorizationStatus, newValue: CLAuthorizationStatus) {
         logger.info("Location authorization changed from \(LocationManager.string(for: oldValue)) to \(LocationManager.string(for: newValue))")
-        
-        // If the user just granted "When In Use" for the first time,
-        // immediately ask them to upgrade to "Always".
-        if oldValue == .notDetermined && newValue == .authorizedWhenInUse {
-            logger.info("User granted 'When In Use'. Immediately requesting 'Always' upgrade.")
-            // Give the system a fraction of a second to settle before showing the next popup.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.locationManager.requestLocationAuthorization(aimForAlways: true)
-            }
-        }
+    
         
         // This existing logic is still correct for starting location updates.
         if (newValue == .authorizedWhenInUse || newValue == .authorizedAlways) && !locationManager.isRequestingLocationUpdates {

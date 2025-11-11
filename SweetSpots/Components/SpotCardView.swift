@@ -17,6 +17,9 @@ struct SpotCardView: View {
 //    let onDecrement: () -> Void
 //    let onReset: () -> Void
     let onShare: () -> Void
+    
+    let isFirstSpot: Bool // Passed in from the parent list
+    @Binding var showShareSpotTip: Bool // Passed in from the parent list
 
     @State private var locationDisplay: (icon: String, text: String)?
 //    @State private var showUndoBanner = false
@@ -94,6 +97,30 @@ struct SpotCardView: View {
 //                    onReset: onReset,
                     onShare: onShare
                 )
+                .popover(isPresented: Binding(
+                    // Only show if this IS the first spot AND the state is true
+                    get: { isFirstSpot && showShareSpotTip },
+                    // Any change (like tapping away) dismisses it
+                    set: { newValue in
+                        if !newValue {
+                            showShareSpotTip = false
+                        }
+                    }
+                ), arrowEdge: .top) {
+                    // This is the custom view that gives you the gray 'X'
+                    TutorialPopoverContent(
+                        title: "Share Your Spot",
+                        message: "Tap the 'more' button to share, edit, or delete a spot.",
+                        onClose: { showShareSpotTip = false }
+                    )
+                    .tint(Color.themeAccent)                    // fixes “blue X” to your accent
+                    .foregroundStyle(Color.themeTextPrimary)    // unify text color
+                    .font(.body)                                // normalize font
+                    .multilineTextAlignment(.leading)           // kill centered wrapping
+                    .frame(maxWidth: 280, alignment: .leading)  // enforce leading layout
+                    .padding(.vertical, 2)                      // tiny breathing room
+                    .presentationCompactAdaptation(.popover)
+                }
                 .padding(.trailing, 6)
                 
 

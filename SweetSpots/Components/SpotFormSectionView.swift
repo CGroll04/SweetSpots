@@ -20,13 +20,17 @@ struct SpotFormSectionView: View {
     let onRemove: () -> Void
     var onFieldFocused: () -> Void
     var onFieldBlurred: () -> Void
+    @Binding var showAddressTip: Bool
+    @Binding var showNotifyTip: Bool
     
     @EnvironmentObject private var authViewModel: AuthViewModel
+    @EnvironmentObject private var locationManager: LocationManager
     @EnvironmentObject private var collectionViewModel: CollectionViewModel
     @FocusState private var focusedField: AddSpotView.FormField?
     
     @State private var isShowingAddCollectionAlert = false
-
+    @State private var isEditingName: Bool = false
+    
     @State private var newCollectionName = ""
     
     var body: some View {
@@ -34,6 +38,15 @@ struct SpotFormSectionView: View {
            formFields
        } label: {
            headerLabel
+       }
+       .alert("Edit Spot Name", isPresented: $isEditingName) {
+           TextField("Spot Name", text: $formState.spotName)
+           Button("Cancel", role: .cancel) { }
+           Button("Save") {
+               // The name is already bound, so we just dismiss
+           }
+       } message: {
+           Text("Enter a new name for this spot.")
        }
        .tint(Color.themePrimary)
    }
@@ -44,6 +57,15 @@ struct SpotFormSectionView: View {
             Text(formState.spotName.isEmpty ? "New Spot \(index + 1)" : formState.spotName)
                 .font(.headline)
                 .foregroundColor(.themeTextPrimary)
+            
+            Button {
+                isEditingName = true
+            } label: {
+                Image(systemName: "pencil.circle.fill")
+                    .font(.headline) // Match the text size
+                    .foregroundColor(.themeAccent)
+            }
+            .buttonStyle(.plain)
             
             Spacer()
 
@@ -93,13 +115,6 @@ struct SpotFormSectionView: View {
         // --- SECTION 1: CORE INFO ---
         locationSearchAndDisplayView()
         
-        ThemedTextField(title: "Spot Name*", text: $formState.spotName, systemImage: "pencil.line")
-            .focused($focusedField, equals: .name)
-            .textInputAutocapitalization(.words)
-        if !formState.spotName.isEmpty && !formState.isValidSpotName {
-            Text("Spot name max 100 characters.").font(.caption).foregroundColor(.themeError)
-        }
-        
         // --- SECTION 2: ORGANIZATION ---
         ZStack {
             HStack {
@@ -144,7 +159,10 @@ struct SpotFormSectionView: View {
         // --- Collection Picker ---
         collectionPicker()
         
-        // --- SECTION 3: DETAILS ---
+        // --- SECTION 3: PROXIMITY ALERT ---
+        notificationSettings()
+        
+        // --- SECTION 4: DETAILS ---
         VStack(alignment: .leading, spacing: 4) {
             Text("Notes").font(.caption).foregroundStyle(.secondary)
             TextEditor(text: $formState.spotNotes)
@@ -152,12 +170,7 @@ struct SpotFormSectionView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.4), lineWidth: 1))
         }
-        ThemedTextField(title: "Source URL", text: $formState.spotSourceURLInput, systemImage: "link")
-            .focused($focusedField, equals: .url)
-            .disabled(formState.isFromShare) // Disable if it came from share extension
         
-        // --- SECTION 4: PROXIMITY ALERT ---
-        notificationSettings()
         
         // --- SECTION 5: ADDITIONAL INFO (COLLAPSIBLE) ---
         DisclosureGroup("Additional Info") {
@@ -165,6 +178,10 @@ struct SpotFormSectionView: View {
                 .focused($focusedField, equals: .phone)
             ThemedTextField(title: "Website URL", text: $formState.spotWebsiteURLInput, systemImage: "globe")
                 .focused($focusedField, equals: .website)
+            
+            ThemedTextField(title: "Source URL", text: $formState.spotSourceURLInput, systemImage: "link")
+                .focused($focusedField, equals: .url)
+                .disabled(formState.isFromShare) // Disable if it came from share extension
         }
         .tint(Color.themeAccent) // Styles the disclosure arrow
     }
@@ -179,6 +196,18 @@ struct SpotFormSectionView: View {
                 text: $formState.searchCompleterVM.queryFragment,
                 systemImage: "magnifyingglass"
             )
+            .popover(isPresented: $showAddressTip, arrowEdge: .top) {
+                TutorialPopoverContent(
+                    title: "Start Here!",
+                    message: "Search for your spot first. It fills in the name and often other info",
+                    onClose: {
+                        // This is the chaining logic
+                        showAddressTip = false // 1. Close this tip
+                        showNotifyTip = true  // 2. Show the next tip
+                    }
+                )
+                .presentationCompactAdaptation(.popover)
+            }
             .focused($focusedField, equals: .search)
             .autocorrectionDisabled(true)
             .textInputAutocapitalization(.words)
@@ -333,7 +362,22 @@ struct SpotFormSectionView: View {
     
     @ViewBuilder
     private func notificationSettings() -> some View {
-        Toggle("Notify me when nearby", isOn: $formState.wantsNearbyNotificationForThisSpot).tint(.themePrimary)
+        Toggle("Notify me when nearby", isOn: $formState.wantsNearbyNotificationForThisSpot)
+            .tint(.themePrimary)
+            .popover(isPresented: $showNotifyTip, arrowEdge: .top) {
+                TutorialPopoverContent(
+                    title: "Get Notified!",
+                    message: "Enable this toggle to get a notification when you're near this spot.",
+                    onClose: {
+                        // This is the end of the chain, just close
+                        showNotifyTip = false
+                    }
+                )
+                .presentationCompactAdaptation(.popover)
+            }
+            .onChange(of: formState.wantsNearbyNotificationForThisSpot) { oldValue, newValue in
+                handleNotificationToggleChanged(newValue: newValue)
+            }
 
         if formState.wantsNearbyNotificationForThisSpot {
             Picker("Notification Distance", selection: $formState.selectedRadiusPreset) {
@@ -350,8 +394,8 @@ struct SpotFormSectionView: View {
 
             if formState.showingCustomRadiusTextField {
                 HStack {
-                    Text("Custom (\(distanceUnit)):") // <-- Uses dynamic unit
-                    TextField(radiusPlaceholder, text: $formState.customRadiusText) // <-- Uses dynamic placeholder
+                    Text("Custom (\(distanceUnit)):")
+                    TextField(radiusPlaceholder, text: $formState.customRadiusText)
                         .keyboardType(.numberPad).multilineTextAlignment(.trailing)
                         .focused($focusedField, equals: .customRadius)
                 }
@@ -391,6 +435,75 @@ struct SpotFormSectionView: View {
     
     
     // MARK: Logic
+    
+    @MainActor
+    private func handleNotificationToggleChanged(newValue: Bool) {
+        // We only care when the user is trying to turn the toggle ON.
+        guard newValue == true else { return }
+
+        Task {
+            // --- 1. CHECK LOCATION PERMISSION ---
+            let locationStatus = locationManager.authorizationStatus
+            
+            if locationStatus == .denied || locationStatus == .restricted {
+                // User has permanently denied location. Show a "Go to Settings" alert.
+                logger.info("Location permission denied. Showing alert.")
+                locationManager.showPermissionAlert = true
+                // Revert the toggle
+                formState.wantsNearbyNotificationForThisSpot = false
+                return
+            }
+            
+            if locationStatus == .notDetermined {
+                // This is the FIRST time the user is asked for location.
+                logger.info("Location not determined. Requesting 'When In Use'.")
+                locationManager.requestWhenInUseAuthorization()
+                // Revert toggle. User must tap it again after granting.
+                formState.wantsNearbyNotificationForThisSpot = false
+                return
+            }
+            
+            if locationStatus == .authorizedWhenInUse {
+                // User granted "When In Use" (maybe from the map).
+                // Now we need to request the UPGRADE to "Always" for geofencing.
+                logger.info("Location is 'When In Use'. Requesting 'Always' upgrade.")
+                locationManager.requestLocationAuthorization(aimForAlways: true)
+                // Revert toggle. User must tap it again after upgrading.
+                formState.wantsNearbyNotificationForThisSpot = false
+                return
+            }
+
+            // If we're here, we have locationStatus == .authorizedAlways.
+            // Location is GOOD.
+            
+            // --- 2. CHECK NOTIFICATION PERMISSION ---
+            
+            // Your `requestNotificationPermissionAsync` function is smart.
+            // It will only ask if the status is .notDetermined, and
+            // will return `true` if it's already authorized.
+            let notificationsGranted = await locationManager.requestNotificationPermissionAsync()
+            
+            if !notificationsGranted {
+                // This handles both .denied and .notDetermined (where user tapped "Don't Allow")
+                logger.info("Notification permission was not granted or is denied.")
+                
+                // TODO: You should show a dedicated "Please enable notifications in Settings" alert
+                // if locationManager.notificationStatus == .denied
+                
+                // Revert the toggle
+                formState.wantsNearbyNotificationForThisSpot = false
+                return
+            }
+            
+            // --- 3. SUCCESS ---
+            // If we get here, we have:
+            // 1. .authorizedAlways location
+            // 2. .authorized notification
+            logger.info("All permissions granted. Notification toggle enabled.")
+            // The toggle is already 'true' and we don't revert it. We're done.
+        }
+    }
+    
     private func processSearchSelection(_ completion: MKLocalSearchCompletion) {
         // Update the view model state
         formState.searchCompleterVM.select(completion: completion)

@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>&quot;SweetSpots uses your location to show nearby spots on the map, sort them by distance, and send you proximity alerts when you&apos;re near a saved spot (even when the app is in the background). For example, you can get a notification when you are driving near a &apos;SweetSpot&apos; you saved.&quot;</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>&quot;SweetSpots uses your location to show nearby spots on the map, sort them by distance, and send you proximity alerts when you&apos;re near a saved spot (even when the app is in the background). For example, you can get a notification when you are driving near a &apos;SweetSpot&apos; you saved.&quot;</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -15,11 +19,8 @@
 			</array>
 		</dict>
 	</array>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-	</dict>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>&quot;Notifications are used to alert you when you are near one of your saved SweetSpots.&quot;</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>

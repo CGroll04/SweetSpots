@@ -33,6 +33,14 @@ struct CollectionsGalleryView: View {
     @State private var itemToShare: ShareableContent?
     @State private var currentSortOrder: CollectionSortOrder = .dateDescending
     
+    @State private var showAddCollectionTip: Bool = false
+    @AppStorage(TutorialKeys.hasSeenAddCollectionTip) private var hasSeenAddCollectionTip: Bool = false
+
+    @State private var showShareCollectionTip: Bool = false
+    @AppStorage(TutorialKeys.hasSeenShareCollectionTip) private var hasSeenShareCollectionTip: Bool = false
+
+    @AppStorage(TutorialKeys.hasAddedFirstCollection) private var hasAddedFirstCollection: Bool = false
+    
     private let columns: [GridItem] = [
         GridItem(.flexible(), spacing: 16),
         GridItem(.flexible(), spacing: 16)
@@ -57,7 +65,7 @@ struct CollectionsGalleryView: View {
     
     // MARK: - Body
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
+        ZStack{
             // Main content layer
             Color.themeBackground.ignoresSafeArea()
             Group {
@@ -69,12 +77,49 @@ struct CollectionsGalleryView: View {
                     collectionsGrid
                 }
             }
-            
-            // Floating Action Button (FAB) layer
-            floatingAddButton
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // 2. CHANGED: Floating Action Button is now manually aligned
+            VStack {
+                Spacer() // Pushes content to the bottom
+                HStack {
+                    Spacer() // Pushes content to the right
+                    floatingAddButton
+                }
+            }
+            .padding() // Add padding to the button's container
+            if showAddCollectionTip {
+                // Dimming layer
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        dismissAddCollectionTip() // 1. Calls central function
+                    }
+                    .transition(.opacity)
+
+                // Content
+                TutorialPopoverContent(
+                    title: "Create a Collection",
+                    message: "Tap the '+' button to group your spots into collections",
+                    onClose: {
+                        dismissAddCollectionTip() // 2. Calls SAME central function
+                    }
+                )
+                .presentationCompactAdaptation(.popover)
+                .padding(30)
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                .zIndex(100) // Ensures it's on top
+            }
         }
         .navigationTitle("Collections")
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button {
+                    showAddCollectionTip = true
+                } label: {
+                    Image(systemName: "questionmark.circle")
+                }
+            }
+            
             ToolbarItem(placement: .navigationBarTrailing) {
                 sortMenu
             }
@@ -101,6 +146,26 @@ struct CollectionsGalleryView: View {
             presenting: collectionToDelete
         ) { collection in
             deleteButtons(for: collection)
+        }
+        .onAppear {
+            if !hasSeenAddCollectionTip {
+                hasSeenAddCollectionTip = true // Mark this page as "visited"
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+                    showAddCollectionTip = true
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .userAddedFirstCollection)) { _ in
+            // This is Step 8's "first added" logic
+            if !hasSeenShareCollectionTip {
+                hasSeenShareCollectionTip = true // Mark this tip as "seen"
+                
+                // Use a delay to let the view settle after save
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+                    showShareCollectionTip = true
+                }
+            }
         }
     }
     
@@ -135,7 +200,9 @@ struct CollectionsGalleryView: View {
                                 },
                                 onDelete: {
                                     collectionToDelete = collection
-                                }
+                                },
+                                isFirstCollection: collection.id == sortedCollections.first?.id,
+                                showShareCollectionTip: $showShareCollectionTip
                             )
                         }
                         .buttonStyle(.plain)
@@ -186,6 +253,9 @@ struct CollectionsGalleryView: View {
     private var floatingAddButton: some View {
         Button(action: {
             isShowingAddSheet = true
+            if showAddCollectionTip {
+                            dismissAddCollectionTip()
+                        }
         }) {
             Image(systemName: "plus")
                 .font(.title.weight(.semibold))
@@ -196,6 +266,27 @@ struct CollectionsGalleryView: View {
                 .shadow(radius: 4, x: 0, y: 2)
         }
         .padding()
+    }
+    
+    private func dismissAddCollectionTip() {
+        // Guard against this running multiple times
+        guard showAddCollectionTip else { return }
+        
+        // 1. Immediately update the state
+        withAnimation {
+            showAddCollectionTip = false
+        }
+        
+        // 2. Run the chaining logic
+        if !sortedCollections.isEmpty {
+            // Use the 0.5s delay for the popover-to-popover race condition
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                // Check state again in case user did something else
+                if !showAddCollectionTip {
+                    showShareCollectionTip = true
+                }
+            }
+        }
     }
     
     // MARK: - Helper Methods
@@ -243,3 +334,4 @@ struct CollectionsGalleryView: View {
         }
     }
 }
+

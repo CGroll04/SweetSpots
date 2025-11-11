@@ -35,6 +35,7 @@ struct AddSpotView: View {
     private let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "SpotViewModel")
 
     @AppStorage("globalGeofencingEnabled") private var globalGeofencingSystemEnabled: Bool = true
+    @AppStorage("hasSeenHidePostHint") private var hasSeenHidePostHint: Bool = false
     
     // MARK: - View Presentation & Mode
     @Binding var isPresented: Bool
@@ -62,6 +63,10 @@ struct AddSpotView: View {
     
     /// The main view now only manages an array of form state objects.
     @StateObject private var viewModel = AddSpotViewModel()
+    
+    @AppStorage(TutorialKeys.hasSeenAddSpotTips) private var hasSeenAddSpotTips: Bool = false
+    @State private var showAddressTip: Bool = false
+    @State private var showNotifyTip: Bool = false
 
 
     // MARK: - UI & Processing State
@@ -70,8 +75,6 @@ struct AddSpotView: View {
     @State private var showingNewCollectionSheet: Bool = false
     @State private var activeFormId: UUID? = nil
     @State private var viewUpdater = UUID()
-
-
 
     // WebView State (Only for .addFromShare mode)
     @State private var showWebView: Bool = true
@@ -185,7 +188,9 @@ struct AddSpotView: View {
                     index: viewModel.spotForms.firstIndex(where: { $0.id == formState.id }) ?? 0,
                     onRemove: { if viewModel.spotForms.count > 1 { viewModel.spotForms.removeAll(where: { $0.id == formState.id }) } },
                     onFieldFocused: { handleFocus(on: formState.id) },
-                    onFieldBlurred: {}
+                    onFieldBlurred: {},
+                    showAddressTip: $showAddressTip,
+                    showNotifyTip: $showNotifyTip
                 )
             }
 
@@ -281,6 +286,16 @@ struct AddSpotView: View {
         ToolbarItem(placement: .navigationBarLeading) {
             Button("Cancel") { isPresented = false }.tint(Color.themeAccent)
         }
+        
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Button {
+                self.showNotifyTip = false // Reset the sequence
+                self.showAddressTip = true // Show the first tip
+            } label: {
+                Image(systemName: "questionmark.circle")
+                    .tint(Color.themeAccent)
+            }
+        }
 
         if mode == .addFromShare && prefilledURL != nil {
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -309,6 +324,29 @@ struct AddSpotView: View {
         if let userId = authViewModel.userSession?.uid, collectionViewModel.collections.isEmpty && !collectionViewModel.isLoading {
             collectionViewModel.listenForCollections(userId: userId)
         }
+        
+        if mode != .edit && !hasSeenAddSpotTips {
+            // Use a short delay to let the view settle
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+                self.showAddressTip = true
+                self.hasSeenAddSpotTips = true
+            }
+        }
+        
+        if mode == .addFromShare && !hasSeenHidePostHint {
+            // We use a brief delay to ensure the view is fully presented before showing an alert
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                presentAlert(
+                    title: "Quick Tip",
+                    message: "If the social media preview gets in your way, you can tap the 'Hide Post' button in the top-right corner to collapse it.",
+                    onDismiss: {
+                        // IMPORTANT: Set the flag to true so this never shows again
+                        self.hasSeenHidePostHint = true
+                    }
+                )
+            }
+        }
+        
         guard viewModel.spotForms.isEmpty else { return }
 
         let form: SpotFormState
@@ -401,25 +439,35 @@ struct AddSpotView: View {
             return
         }
         
+        let isFirstSpotAdd = mode != .edit && spotsViewModel.spots.isEmpty
+        
         // Handle Edit Mode (only ever one spot)
         if mode == .edit, let spot = spotsToSave.first {
             spotsViewModel.updateSpot(spot) { result in
-                handleSaveCompletion(result: result, count: 1)
+                handleSaveCompletion(result: result, count: 1, isFirstSpotAdd: false)
             }
             return
         }
         
         // Handle Add Modes (can be one or many spots)
         spotsViewModel.addMultipleSpots(spotsToSave) { result in
-            handleSaveCompletion(result: result, count: spotsToSave.count)
+            handleSaveCompletion(result: result, count: spotsToSave.count, isFirstSpotAdd: isFirstSpotAdd)
         }
     }
 
-    private func handleSaveCompletion(result: Result<Void, Error>, count: Int) {
+    private func handleSaveCompletion(result: Result<Void, Error>, count: Int, isFirstSpotAdd: Bool) {
         isProcessing = false
         switch result {
         case .success:
             self.logger.info("Successfully saved \(count) spot(s).")
+            if isFirstSpotAdd {
+                Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    // Post a notification that SpotListView/SpotCardView will listen for
+                    NotificationCenter.default.post(name: .userAddedFirstSpot, object: nil)
+                }
+            }
+            
             // Sync geofences after a successful save
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 200_000_000) // Brief delay for DB propagation

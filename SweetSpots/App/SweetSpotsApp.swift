@@ -9,6 +9,7 @@ import FirebaseCore
 import FirebaseAppCheck
 import UserNotifications
 import os.log
+import TipKit
 
 fileprivate let logger = Logger(subsystem: "com.charliegroll.sweetspots", category: "AppLifecycle")
 
@@ -33,6 +34,9 @@ struct SweetSpotsApp: App {
                     }
                     logger.info("Continuing user activity with URL: \(url.absoluteString)")
                     DeepLinkRouter.handle(url: url, navigation: navigationCoordinator)
+                }
+                .task{
+                    try? Tips.configure()
                 }
         }
     }

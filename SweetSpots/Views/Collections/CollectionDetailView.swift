@@ -205,7 +205,9 @@ struct CollectionDetailView: View {
                                 userLocation: locationManager.userLocation,
                                 onEdit: { editSpot(spot) },
                                 onDelete: { requestDeleteConfirmation(for: spot) },
-                                onShare: { Task { await handleShare(for: spot) } }
+                                onShare: { Task { await handleShare(for: spot) } },
+                                isFirstSpot: false,
+                                showShareSpotTip: .constant(false)
                             )
                         }
                     }

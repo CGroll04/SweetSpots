@@ -18,6 +18,9 @@ struct CollectionCardView: View {
     let onManageSpots: () -> Void
     let onDelete: () -> Void
     
+    let isFirstCollection: Bool
+    @Binding var showShareCollectionTip: Bool
+    
     @Environment(\.colorScheme) var colorScheme
     
     @State private var hapticGenerator = UIImpactFeedbackGenerator(style: .medium)
@@ -33,7 +36,6 @@ struct CollectionCardView: View {
     
     var body: some View {
         ZStack{
-            // 1. The attractive gradient background
             backgroundGradient
             
             Menu {
@@ -50,6 +52,24 @@ struct CollectionCardView: View {
                     .padding(8)
                     .background(.black.opacity(0.3))
                     .clipShape(Circle())
+            }
+            .popover(isPresented: Binding(
+                // Only show if this IS the first card AND the state is true
+                get: { isFirstCollection && showShareCollectionTip },
+                // Any change (like tapping away) dismisses it
+                set: { newValue in
+                    // Only update if the new value is false
+                    if !newValue {
+                        showShareCollectionTip = false
+                    }
+                }
+            ), arrowEdge: .top) {
+                TutorialPopoverContent(
+                    title: "Share Your Collection",
+                    message: "Click the share button to share a collection",
+                    onClose: { showShareCollectionTip = false }
+                )
+                .presentationCompactAdaptation(.popover)
             }
             .padding(10)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)

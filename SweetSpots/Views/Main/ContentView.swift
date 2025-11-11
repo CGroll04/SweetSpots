@@ -4,8 +4,8 @@
 //
 //  Created by Charlie Groll on 2025-05-04.
 //
-
 import SwiftUI
+import TipKit
 
 /// The root view of the application.
 /// It conditionally displays either the AuthView for user authentication
@@ -15,80 +15,55 @@ struct ContentView: View {
     // This instance is provided by SweetSpotsApp and manages the user's session.
     @EnvironmentObject private var authViewModel: AuthViewModel
     
-    @AppStorage("hasShownInitialTutorial") private var hasShownInitialTutorial: Bool = false
-    @State private var showTutorial = false
-    @State private var showTutorialReminder = false
-
+    @AppStorage("hasShownWelcomeScreen") private var hasShownWelcomeScreen: Bool = false
+    @AppStorage(TutorialKeys.hasSeenInfoButtonPDF) private var hasSeenInfoButtonPDF: Bool = false
+    @State private var showInfoReminderScreen = false
     
     var body: some View {
-        // MARK: - 2. Wrap in a ZStack for the popup overlay
-        ZStack {
-            Group {
-                if authViewModel.userSession == nil {
-                    AuthView()
-                } else {
-                    MainTabView(authViewModel: authViewModel)
+        Group {
+            if !hasShownWelcomeScreen {
+                // Step 1: User's first launch, show WelcomeView
+                WelcomeView {
+                    // Step 2: User taps "Get Started", set flag to true
+                    hasShownWelcomeScreen = true
                 }
-            }
-            .animation(.easeInOut, value: authViewModel.userSession)
-            
-            // The reminder popup overlay
-            if showTutorialReminder {
-                ReminderPopupView()
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .zIndex(1) // Ensure it's on top of everything
+            } else if authViewModel.userSession == nil {
+                AuthView()
+            } else {
+                MainTabView(authViewModel: authViewModel)
             }
         }
-        // MARK: - 3. Add Modifiers to Trigger the Tutorial
-        .onReceive(authViewModel.$userSession.dropFirst()) { userSession in
-            // When a new user logs in for the first time...
-            if userSession != nil && !hasShownInitialTutorial {
-                // ...wait 2 seconds before showing the tutorial.
-                Task {
-                    // This delay gives time for system popups like notifications/location to appear first
-                    try? await Task.sleep(for: .seconds(2))
-                    showTutorial = true
-                }
-            }
-        }
-        .fullScreenCover(isPresented: $showTutorial) {
-            TutorialView(context: .firstLaunch) {
-                // This code runs when the tutorial is dismissed
-                hasShownInitialTutorial = true // Mark tutorial as seen so it doesn't show again
-                showTutorial = false
-                
-                // Show the reminder popup
-                withAnimation {
-                    showTutorialReminder = true
-                }
-                
-                // Hide the reminder after 3 seconds
-                Task {
-                    try? await Task.sleep(for: .seconds(3))
-                    withAnimation {
-                        showTutorialReminder = false
+        .animation(.easeInOut, value: hasShownWelcomeScreen)
+        .animation(.easeInOut, value: authViewModel.userSession)
+        .onChange(of: hasShownWelcomeScreen) { _, newHasShown in
+            // When the welcome screen is dismissed (and user is logged in)
+            if newHasShown && authViewModel.userSession != nil {
+                // ...check if we need to show the info PDF.
+                if !hasSeenInfoButtonPDF {
+                    // Use a delay so it doesn't appear at the exact
+                    // same time as the main view.
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.5))
+                        showInfoReminderScreen = true
                     }
                 }
             }
         }
-    }
-}
-
-struct ReminderPopupView: View {
-    var body: some View {
-        VStack {
-            HStack(spacing: 8) {
-                Image(systemName: "info.circle.fill")
-                Text("You can find the tutorial again in Settings.")
-                    .font(.footnote)
+        .fullScreenCover(isPresented: $showInfoReminderScreen) {
+            InfoButtonReminderView {
+                // This is TipKit, which is fine for this *one* screen.
+                // It just marks the PDF as "seen" forever.
+                hasSeenInfoButtonPDF = true // Set our new flag
+                                
+                showInfoReminderScreen = false
+                
+                Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    
+                    // Post the notification that SpotListView will be listening for.
+                    NotificationCenter.default.post(name: .infoPDFDismissed, object: nil)
+                }
             }
-            .padding(12)
-            .background(.thinMaterial)
-            .clipShape(Capsule())
-            .shadow(radius: 10)
-            
-            Spacer()
         }
-        .padding()
     }
 }
